@@ -173,10 +173,26 @@ on that newer runtime must be reported as such. See
 [Apple Watch compatibility](https://support.apple.com/en-us/118490) and
 [Xcode requirements](https://developer.apple.com/xcode/system-requirements/).
 
+The installed Xcode 27.2 SDK metadata declares
+`SupportedTargets.watchsimulator.MinimumDeploymentTarget = 9.0` and
+`SupportedTargets.watchos.MinimumDeploymentTarget = 9.0`. The full build at
+8.0 failed at that SDK deployment-range check. A direct Swift typecheck of
+`MetisWatchApp.swift` with target `arm64-apple-watchos8.0-simulator` and the
+27.2 Watch Simulator SDK returned exit 0. This checks source/API availability;
+it does not produce or run a watchOS 8 app. The SDK's concurrency minimum is
+8.0, which is distinct from its full-build minimum.
+
+Keep the repository and device deployment target at 8.0. Building a device
+artifact for that minimum requires an SDK that supports it: Apple's
+[current Xcode support matrix](https://developer.apple.com/support/xcode/)
+lists watchOS 8–26.5 deployment support for Xcode 26.6 and watchOS 9–27 for
+Xcode 27.2. A current simulator may use the scoped command below without
+changing that device requirement.
+
 For simulator acceptance, build the **MetisWatch** scheme and inspect the
-result's `MinimumOSVersion` and executable deployment metadata. Record
-warnings from a toolchain that excludes 8.x from its supported range. Do not
-change the target to 9 or 10 to silence those warnings. Then verify:
+result's `MinimumOSVersion` and executable deployment metadata. Record the
+actual runtime, SDK and simulator minimum. The simulator override below is
+not evidence of an 8.x device build. Then verify:
 
 - Opening an existing chat, returning with Back, and creating a new chat
   that opens its prompt screen immediately.
@@ -190,6 +206,56 @@ change the target to 9 or 10 to silence those warnings. Then verify:
 - Compact Watch dimensions, larger text and reachability changes during
   navigation. Use a paired simulator only where WatchConnectivity is
   supported, and identify any relay scenarios the simulator cannot exercise.
+
+### Building with a newer Watch Simulator SDK
+
+Resolve the SDK from the selected Xcode installation. This command reads its
+documented target metadata, fails if that metadata is absent or malformed,
+and uses the greater of the app's requested minimum and the SDK's minimum.
+The build override matches only `watchsimulator`; it does not alter
+`MetisWatch.xcconfig` or the `watchos` device build. Replace the destination
+placeholder with an actually installed Watch simulator ID.
+
+```sh
+METIS_WATCH_REQUESTED_OS=8.0
+METIS_WATCH_SIM_SDK="$(xcrun --sdk watchsimulator --show-sdk-path)"
+METIS_WATCH_SIM_ARCH="$(uname -m)"
+METIS_WATCH_SIM_MIN="$(python3 - "$METIS_WATCH_SIM_SDK/SDKSettings.json" "$METIS_WATCH_REQUESTED_OS" <<'PY'
+import json
+import re
+import sys
+
+with open(sys.argv[1]) as metadata:
+    sdk_minimum = json.load(metadata)["SupportedTargets"]["watchsimulator"]["MinimumDeploymentTarget"]
+requested = sys.argv[2]
+
+def version(value):
+    if not isinstance(value, str) or not re.fullmatch(r"\d+(?:\.\d+){0,2}", value):
+        raise ValueError("Missing or malformed SDK/deployment version")
+    parts = tuple(int(part) for part in value.split("."))
+    return parts + (0,) * (3 - len(parts))
+
+print(max((requested, sdk_minimum), key=version))
+PY
+)" || exit 1
+
+# Source/API check at the requested minimum; no artifact or runtime test.
+xcrun --sdk watchsimulator swiftc -typecheck -parse-as-library \
+  -target "$METIS_WATCH_SIM_ARCH-apple-watchos$METIS_WATCH_REQUESTED_OS-simulator" \
+  -sdk "$METIS_WATCH_SIM_SDK" clients/apple/MetisWatch/MetisWatchApp.swift || exit 1
+
+# Full build for the installed simulator SDK, with a simulator-only override.
+xcodebuild -project clients/apple/MetisApple.xcodeproj -scheme MetisWatch \
+  -sdk watchsimulator -destination 'platform=watchOS Simulator,id=<installed-watch-udid>' \
+  "WATCHOS_DEPLOYMENT_TARGET[sdk=watchsimulator*]=$METIS_WATCH_SIM_MIN" \
+  CODE_SIGNING_ALLOWED=NO build
+```
+
+Run the build only after the typecheck succeeds. A 9.0 simulator minimum from
+this calculation is expected for SDK 27.2; never label that artifact as a
+watchOS 8 build. The same scoped setting can be supplied to the iPhone
+simulator test command when its scheme builds the embedded Watch target.
+Check resolved build settings and artifact metadata after running it.
 
 Before claiming watchOS 8 runtime compatibility, repeat the applicable
 checks with an installed 8.x runtime and a supporting toolchain. Physical
