@@ -74,6 +74,14 @@ private final class MetisWebCookieObserver: NSObject, WKHTTPCookieStoreObserver 
     }
 }
 
+private final class MetisAppControlsBridge: NSObject, WKScriptMessageHandler {
+    weak var owner: MetisWebWorkspace?
+
+    func userContentController(_ userContentController: WKUserContentController, didReceive message: WKScriptMessage) {
+        Task { @MainActor [weak self] in self?.owner?.receiveAppControls(message) }
+    }
+}
+
 @MainActor
 final class MetisWebWorkspace: NSObject, ObservableObject {
     let webView: WKWebView
@@ -82,6 +90,8 @@ final class MetisWebWorkspace: NSObject, ObservableObject {
     @Published private(set) var errorMessage: String?
     @Published private(set) var canGoBack = false
     @Published private(set) var canGoForward = false
+    @Published private(set) var appControlsAvailable = false
+    @Published var appControlsRequested = false
     @Published var externalURL: URL?
     @Published var externalConfirmationURL: URL?
     @Published var sharedFile: URL? {
@@ -100,6 +110,7 @@ final class MetisWebWorkspace: NSObject, ObservableObject {
     private let unauthorized: () -> Void
     private let sessionChanged: () -> Void
     private let cookieObserver = MetisWebCookieObserver()
+    private let appControlsBridge = MetisAppControlsBridge()
     private var observations: [NSKeyValueObservation] = []
     private var downloads: [ObjectIdentifier: Download] = [:]
     private var ownedFiles: [URL: URL] = [:]
@@ -136,6 +147,13 @@ final class MetisWebWorkspace: NSObject, ObservableObject {
         webView.isOpaque = false
         webView.backgroundColor = .systemBackground
         webView.scrollView.backgroundColor = .systemBackground
+        // The UIKit keyboard guide owns keyboard avoidance. The page's viewport-fit=cover and
+        // safe-area CSS own home-indicator clearance, without an extra native inset.
+        webView.scrollView.contentInsetAdjustmentBehavior = .never
+        webView.scrollView.contentInset = .zero
+        webView.scrollView.scrollIndicatorInsets = .zero
+        webView.scrollView.automaticallyAdjustsScrollIndicatorInsets = false
+        installAppPresentation()
         cookieObserver.owner = self
         configuration.websiteDataStore.httpCookieStore.add(cookieObserver)
         observations = [
@@ -168,6 +186,49 @@ final class MetisWebWorkspace: NSObject, ObservableObject {
                 }
             },
         ]
+    }
+
+    private func installAppPresentation() {
+        guard let data = try? JSONEncoder().encode(client.origin),
+              let literal = String(data: data, encoding: .utf8),
+              let labelData = try? JSONEncoder().encode(String(localized: "iPhone controls")),
+              let labelLiteral = String(data: labelData, encoding: .utf8) else { return }
+        // Presentation code is app-owned and first-party only. It never reads
+        // cookies, credentials, model parameters or chat content.
+        let source = """
+        (() => {
+          if (window.top !== window || location.origin !== new URL(\(literal)).origin) return;
+          const metisAppControlsLabel = \(labelLiteral);
+          \(MetisAppWebPresentation.userScript)
+        })();
+        """
+        let controller = webView.configuration.userContentController
+        appControlsBridge.owner = self
+        controller.add(appControlsBridge, name: "metisAppControls")
+        controller.addUserScript(WKUserScript(source: source, injectionTime: .atDocumentEnd, forMainFrameOnly: true))
+    }
+
+    fileprivate func receiveAppControls(_ message: WKScriptMessage) {
+        guard !invalidated, started, !authorizationLost,
+              message.name == "metisAppControls", let action = message.body as? String,
+              message.webView === webView, message.frameInfo.isMainFrame,
+              trusted(message.frameInfo.securityOrigin), let server,
+              let frameURL = message.frameInfo.request.url,
+              MetisWebPolicy.isSameOrigin(frameURL, server: server) else { return }
+        switch action {
+        case "controls-available":
+            appControlsAvailable = true
+        case "controls-unavailable":
+            appControlsAvailable = false
+        case "menu":
+            guard externalURL == nil, externalConfirmationURL == nil, sharedFile == nil,
+                  activeDialog == nil else { return }
+            // This bridge only requests a native sheet. Every action still requires
+            // a separate explicit button press in that sheet.
+            appControlsRequested = true
+        default:
+            break
+        }
     }
 
     func start() async {
@@ -253,6 +314,11 @@ final class MetisWebWorkspace: NSObject, ObservableObject {
         cookieTask?.cancel()
         authorizationTask?.cancel()
         cookieObserver.owner = nil
+        appControlsBridge.owner = nil
+        appControlsAvailable = false
+        appControlsRequested = false
+        webView.configuration.userContentController.removeScriptMessageHandler(forName: "metisAppControls")
+        webView.configuration.userContentController.removeAllUserScripts()
         let store = webView.configuration.websiteDataStore
         store.httpCookieStore.remove(cookieObserver)
         observations.forEach { $0.invalidate() }
@@ -502,6 +568,13 @@ extension MetisWebWorkspace: WKNavigationDelegate {
         guard !invalidated else { return }
         errorMessage = nil
         isLoading = true
+    }
+
+    func webView(_ webView: WKWebView, didCommit navigation: WKNavigation!) {
+        guard !invalidated else { return }
+        // A new document must advertise its own entry point. Provisional
+        // downloads and cancelled navigations leave the current page intact.
+        appControlsAvailable = false
     }
 
     func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) {

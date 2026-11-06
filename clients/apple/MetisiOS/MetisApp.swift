@@ -553,10 +553,8 @@ private struct RootView: View {
                                    pushRequested = false
                                    pushRegistered = false
                                    saveSessionPreferences()
-                               }, unauthorized: { expire(current) }, title: "iPhone settings")
-            .toolbar { ToolbarItem(placement: .confirmationAction) {
-                Button("Done") { iPhoneSettings = false }
-            } }
+                               }, unauthorized: { expire(current) }, title: "iPhone settings",
+                               close: { iPhoneSettings = false })
             .sheet(isPresented: $iPhonePushSettings) {
                 PushSettingsView(events: $pushEvents, enabled: pushRequested, busy: pushBusy, status: notice) {
                     Task { await changePush(current) }

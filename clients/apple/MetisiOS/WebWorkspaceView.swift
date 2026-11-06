@@ -12,7 +12,7 @@ struct WebWorkspaceView: View {
     let showConnectionSettings: () -> Void
 
     @State private var hasLoadedWorkspace = false
-    @State private var keyboardVisible = false
+    @State private var openConnectionSettingsAfterDismiss = false
     @State private var confirmExternalNavigation = false
 
     var body: some View {
@@ -20,7 +20,9 @@ struct WebWorkspaceView: View {
             MetisTheme.background
 
             WorkspaceWebView(webView: workspace.webView)
-                .accessibilityIdentifier("metis.webWorkspace")
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+                .ignoresSafeArea(.container, edges: .bottom)
+                .ignoresSafeArea(.keyboard, edges: .bottom)
                 .accessibilityHidden(!hasLoadedWorkspace || workspace.errorMessage != nil)
                 .allowsHitTesting(hasLoadedWorkspace && workspace.errorMessage == nil)
 
@@ -40,12 +42,19 @@ struct WebWorkspaceView: View {
                     .accessibilityLabel("Loading workspace")
             }
         }
-        .safeAreaInset(edge: .bottom, spacing: 0) {
-            if !keyboardVisible {
-                appMenu
-                    .frame(maxWidth: .infinity)
-                    .padding(.horizontal, 16)
-                    .background(MetisTheme.background)
+        .overlay(alignment: .topTrailing) {
+            if !hasLoadedWorkspace || workspace.errorMessage != nil || !workspace.appControlsAvailable {
+                Button {
+                    workspace.appControlsRequested = true
+                } label: {
+                    Image(systemName: "ellipsis")
+                        .font(.body.weight(.semibold))
+                        .frame(width: 44, height: 44)
+                }
+                .buttonStyle(WorkspaceGlassButtonStyle())
+                .accessibilityLabel("iPhone controls")
+                .accessibilityIdentifier("metis.appControlsFallback")
+                .padding(12)
             }
         }
         .background(MetisTheme.background.ignoresSafeArea())
@@ -55,12 +64,6 @@ struct WebWorkspaceView: View {
         }
         .onChange(of: workspace.isLoading) { _, loading in
             if !loading { markWorkspaceLoaded() }
-        }
-        .onReceive(NotificationCenter.default.publisher(for: UIResponder.keyboardWillShowNotification)) { _ in
-            keyboardVisible = true
-        }
-        .onReceive(NotificationCenter.default.publisher(for: UIResponder.keyboardWillHideNotification)) { _ in
-            keyboardVisible = false
         }
         .onChange(of: workspace.externalConfirmationURL, initial: true) { _, url in
             confirmExternalNavigation = url != nil
@@ -74,6 +77,20 @@ struct WebWorkspaceView: View {
         } message: {
             Text("This workspace wants to open \(externalWebsiteHost).")
         }
+        .sheet(isPresented: $workspace.appControlsRequested, onDismiss: {
+            if openConnectionSettingsAfterDismiss {
+                openConnectionSettingsAfterDismiss = false
+                showConnectionSettings()
+            }
+        }) {
+            WorkspaceAppControls(workspace: workspace, origin: origin) {
+                openConnectionSettingsAfterDismiss = true
+                workspace.appControlsRequested = false
+            }
+            .presentationDetents([.medium, .large])
+            .presentationDragIndicator(.visible)
+            .presentationCornerRadius(32)
+        }
         .sheet(item: externalPresentation, onDismiss: { workspace.externalURL = nil }) { destination in
             WorkspaceExternalPage(url: destination.url)
                 .ignoresSafeArea()
@@ -85,47 +102,6 @@ struct WebWorkspaceView: View {
             }
             .presentationDetents([.medium, .large])
         }
-    }
-
-    private var appMenu: some View {
-        Menu {
-            Button("iPhone settings", systemImage: "iphone") {
-                showConnectionSettings()
-            }
-
-            Divider()
-
-            Button("Reload workspace", systemImage: "arrow.clockwise") {
-                workspace.retry()
-            }
-            .disabled(workspace.isLoading)
-
-            Button("Back", systemImage: "chevron.left") {
-                workspace.back()
-            }
-            .disabled(!workspace.canGoBack)
-
-            Button("Forward", systemImage: "chevron.right") {
-                workspace.forward()
-            }
-            .disabled(!workspace.canGoForward)
-        } label: {
-            HStack(spacing: 6) {
-                Image(systemName: "ellipsis")
-                    .accessibilityHidden(true)
-                Text("App")
-            }
-            .font(.caption.weight(.medium))
-            .foregroundStyle(MetisTheme.muted)
-            .padding(.horizontal, 12)
-            .frame(height: 28)
-            .background(MetisTheme.secondary, in: Capsule())
-            .frame(minWidth: 80, minHeight: 44)
-            .contentShape(Rectangle())
-        }
-        .buttonStyle(MetisIconButtonStyle())
-        .accessibilityLabel("App controls")
-        .accessibilityIdentifier("metis.appMenu")
     }
 
     private var openingWorkspace: some View {
@@ -209,6 +185,325 @@ struct WebWorkspaceView: View {
     }
 }
 
+/// Device actions are deliberately on demand: the canonical web header and
+/// composer keep their entire hit areas and the app reserves no bottom rail.
+@MainActor
+private struct WorkspaceAppControls: View {
+    @ObservedObject var workspace: MetisWebWorkspace
+    let origin: String
+    let showConnectionSettings: () -> Void
+
+    @Environment(\.dismiss) private var dismiss
+    @Environment(\.dynamicTypeSize) private var dynamicTypeSize
+
+    var body: some View {
+        ScrollView {
+            VStack(alignment: .leading, spacing: 24) {
+                HStack {
+                    MetisWordmark(width: 72)
+                    Spacer(minLength: 16)
+                    Button {
+                        dismiss()
+                    } label: {
+                        Image(systemName: "xmark")
+                            .font(.body.weight(.semibold))
+                            .frame(width: 48, height: 48)
+                    }
+                    .buttonStyle(WorkspaceGlassButtonStyle())
+                    .accessibilityLabel("Close iPhone controls")
+                    .accessibilityIdentifier("metis.appControlsClose")
+                }
+
+                VStack(alignment: .leading, spacing: 6) {
+                    Text("iPhone controls")
+                        .font(.title2.weight(.semibold))
+                        .accessibilityAddTraits(.isHeader)
+                    Text(verbatim: URL(string: origin)?.host ?? origin)
+                        .font(.footnote)
+                        .foregroundStyle(MetisTheme.muted)
+                        .fixedSize(horizontal: false, vertical: true)
+                        .textSelection(.enabled)
+                }
+
+                Button(action: showConnectionSettings) {
+                    HStack(spacing: 12) {
+                        Image(systemName: "iphone")
+                            .font(.title3)
+                            .accessibilityHidden(true)
+                        Text("iPhone settings")
+                            .font(.body.weight(.semibold))
+                            .fixedSize(horizontal: false, vertical: true)
+                        Spacer(minLength: 8)
+                        Image(systemName: "chevron.right")
+                            .font(.footnote.weight(.semibold))
+                            .accessibilityHidden(true)
+                    }
+                    .padding(.horizontal, 20)
+                    .padding(.vertical, 12)
+                    .frame(maxWidth: .infinity, minHeight: 56)
+                }
+                .buttonStyle(WorkspaceGlassButtonStyle())
+                .accessibilityIdentifier("metis.iPhoneSettings")
+
+                if dynamicTypeSize.isAccessibilitySize {
+                    VStack(spacing: 12) { navigationActions }
+                } else {
+                    HStack(spacing: 12) { navigationActions }
+                }
+            }
+            .padding(24)
+            .frame(maxWidth: 520)
+            .frame(maxWidth: .infinity)
+        }
+        .foregroundStyle(MetisTheme.ink)
+        .background(MetisTheme.background)
+        .accessibilityIdentifier("metis.appControlsSheet")
+    }
+
+    @ViewBuilder
+    private var navigationActions: some View {
+        navigationAction("Back", symbol: "chevron.left", identifier: "metis.workspaceBack",
+                         disabled: !workspace.canGoBack) {
+            workspace.back()
+        }
+        navigationAction("Forward", symbol: "chevron.right", identifier: "metis.workspaceForward",
+                         disabled: !workspace.canGoForward) {
+            workspace.forward()
+        }
+        navigationAction("Reload", symbol: "arrow.clockwise", identifier: "metis.workspaceReload",
+                         disabled: workspace.isLoading) {
+            workspace.retry()
+        }
+    }
+
+    private func navigationAction(_ title: LocalizedStringKey, symbol: String,
+                                  identifier: String, disabled: Bool,
+                                  action: @escaping () -> Void) -> some View {
+        Button {
+            dismiss()
+            action()
+        } label: {
+            VStack(spacing: 8) {
+                Image(systemName: symbol)
+                    .font(.body.weight(.medium))
+                    .accessibilityHidden(true)
+                Text(title)
+                    .font(.footnote.weight(.medium))
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+            .padding(.horizontal, 12)
+            .padding(.vertical, 14)
+            .frame(maxWidth: .infinity, minHeight: 64)
+        }
+        .buttonStyle(WorkspaceGlassButtonStyle())
+        .disabled(disabled)
+        .accessibilityIdentifier(identifier)
+    }
+}
+
+/// Liquid Glass belongs to controls. Opaque, high-contrast controls take
+/// precedence when accessibility preferences request them.
+private struct WorkspaceGlassButtonStyle: ButtonStyle {
+    @Environment(\.isEnabled) private var isEnabled
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @Environment(\.accessibilityReduceTransparency) private var reduceTransparency
+    @Environment(\.colorSchemeContrast) private var contrast
+
+    func makeBody(configuration: Configuration) -> some View {
+        surface(configuration.label)
+            .foregroundStyle(MetisTheme.ink)
+            .opacity(isEnabled ? (configuration.isPressed ? 0.72 : 1) : 0.4)
+            .contentShape(Capsule())
+    }
+
+    @ViewBuilder
+    private func surface(_ label: Configuration.Label) -> some View {
+        if reduceTransparency || contrast == .increased {
+            label
+                .background(MetisTheme.secondary, in: Capsule())
+                .overlay {
+                    Capsule().strokeBorder(contrast == .increased ? MetisTheme.ink : MetisTheme.border,
+                                           lineWidth: 1)
+                }
+        } else if #available(iOS 26.0, *) {
+            label.glassEffect(.regular.interactive(isEnabled && !reduceMotion), in: Capsule())
+        } else {
+            label
+                .background(.regularMaterial, in: Capsule())
+                .overlay { Capsule().strokeBorder(MetisTheme.border, lineWidth: 1) }
+        }
+    }
+}
+
+/// Presentation-only additions for the trusted, first-party web workspace.
+/// Anchors come from its existing accessible sidebar, header and composer.
+/// This never reads credentials, chat contents or provider/model state.
+enum MetisAppWebPresentation {
+    static let userScript = #"""
+    (() => {
+      if (window.top !== window || !window.webkit?.messageHandlers?.metisAppControls) return;
+      if (document.getElementById('metis-native-app-style')) return;
+
+      const style = document.createElement('style');
+      style.id = 'metis-native-app-style';
+      style.textContent = `
+        html[data-metis-native-app="ios"] {
+          --metis-app-glass: color-mix(in oklch, var(--background) 88%, transparent);
+          --metis-app-edge: color-mix(in oklch, var(--foreground) 13%, transparent);
+        }
+        html[data-metis-native-app="ios"] [data-metis-app-header],
+        html[data-metis-native-app="ios"] [data-metis-app-composer] {
+          background: var(--metis-app-glass);
+          -webkit-backdrop-filter: blur(22px) saturate(1.15);
+          backdrop-filter: blur(22px) saturate(1.15);
+        }
+        html[data-metis-native-app="ios"] [data-metis-app-header] {
+          border-bottom-color: var(--metis-app-edge);
+        }
+        html[data-metis-native-app="ios"] [data-metis-app-composer] {
+          border-radius: 24px;
+          box-shadow: inset 0 0 0 1px var(--metis-app-edge),
+                      0 8px 28px color-mix(in oklch, var(--foreground) 5%, transparent);
+        }
+        html[data-metis-native-app="ios"] aside[aria-label="Chats sidebar"] {
+          background: color-mix(in oklch, var(--popover) 92%, transparent);
+          -webkit-backdrop-filter: blur(26px);
+          backdrop-filter: blur(26px);
+          border-radius: 0 24px 24px 0;
+        }
+        html[data-metis-native-app="ios"] [data-metis-app-sidebar-footer] {
+          padding-bottom: max(0.5rem, env(safe-area-inset-bottom));
+        }
+        html[data-metis-native-app="ios"] aside.workspace-surface {
+          box-sizing: border-box;
+          padding-bottom: env(safe-area-inset-bottom);
+        }
+        html[data-metis-native-app="ios"] [data-metis-app-controls] {
+          display: flex;
+          align-items: center;
+          gap: 10px;
+          width: 100%;
+          min-height: 48px;
+          margin-bottom: 8px;
+          padding: 10px 12px;
+          border: 1px solid var(--metis-app-edge);
+          border-radius: 18px;
+          background: color-mix(in oklch, var(--background) 78%, transparent);
+          color: var(--foreground);
+          font: 500 0.875rem/1.4 -apple-system, BlinkMacSystemFont, sans-serif;
+          text-align: left;
+          cursor: pointer;
+          touch-action: manipulation;
+          transition: background-color 120ms ease;
+        }
+        html[data-metis-native-app="ios"] [data-metis-app-controls] svg {
+          width: 20px;
+          height: 20px;
+          flex-shrink: 0;
+        }
+        html[data-metis-native-app="ios"] [data-metis-app-controls] span {
+          min-width: 0;
+          flex: 1;
+        }
+        html[data-metis-native-app="ios"] [data-metis-app-controls]:active {
+          background: var(--muted);
+        }
+        html[data-metis-native-app="ios"] [data-metis-app-controls]:focus-visible {
+          outline: 2px solid var(--foreground);
+          outline-offset: 2px;
+        }
+        @media (prefers-reduced-transparency: reduce), (prefers-contrast: more) {
+          html[data-metis-native-app="ios"] [data-metis-app-header],
+          html[data-metis-native-app="ios"] [data-metis-app-composer],
+          html[data-metis-native-app="ios"] aside[aria-label="Chats sidebar"],
+          html[data-metis-native-app="ios"] [data-metis-app-controls] {
+            background: var(--background);
+            -webkit-backdrop-filter: none;
+            backdrop-filter: none;
+            border-color: var(--foreground);
+          }
+          html[data-metis-native-app="ios"] [data-metis-app-composer] {
+            box-shadow: inset 0 0 0 1px var(--foreground);
+          }
+        }
+        @media (prefers-reduced-motion: reduce) {
+          html[data-metis-native-app="ios"] [data-metis-app-controls] {
+            transition: none;
+          }
+        }
+      `;
+      document.head.append(style);
+
+      let lastAvailability = null;
+      const announceAvailability = available => {
+        if (lastAvailability === available) return;
+        lastAvailability = available;
+        window.webkit.messageHandlers.metisAppControls.postMessage(
+          available ? 'controls-available' : 'controls-unavailable');
+      };
+      const decorate = () => {
+        const accountButtons = document.querySelectorAll('aside button[aria-label="Open account menu"]');
+        if (!accountButtons.length) {
+          delete document.documentElement.dataset.metisNativeApp;
+          announceAvailability(false);
+          return;
+        }
+        document.documentElement.dataset.metisNativeApp = 'ios';
+        for (const account of accountButtons) {
+          const sidebar = account.closest('aside');
+          const footer = account.parentElement;
+          if (!sidebar || !footer) continue;
+          if (!footer.hasAttribute('data-metis-app-sidebar-footer')) footer.dataset.metisAppSidebarFooter = '';
+          if (footer.querySelector('[data-metis-app-controls]')) continue;
+          const button = document.createElement('button');
+          button.type = 'button';
+          button.id = sidebar.getAttribute('aria-label') === 'Chats sidebar'
+            ? 'metis-app-controls' : 'metis-app-controls-desktop';
+          button.dataset.metisAppControls = '';
+          button.setAttribute('aria-label', metisAppControlsLabel);
+          button.setAttribute('aria-haspopup', 'dialog');
+          button.innerHTML = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="6" y="2" width="12" height="20" rx="3"/><path d="M10 18h4"/></svg><span></span><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m9 6 6 6-6 6"/></svg>';
+          button.querySelector('span').textContent = metisAppControlsLabel;
+          footer.insertBefore(button, account);
+        }
+        for (const toggle of document.querySelectorAll('header button[aria-label="Open sidebar"], header button[aria-label="Show sidebar"], header button[aria-label="Hide sidebar"]')) {
+          const header = toggle.closest('header');
+          if (header && !header.hasAttribute('data-metis-app-header')) header.dataset.metisAppHeader = '';
+        }
+        for (const input of document.querySelectorAll('.composer-input-area')) {
+          const form = input.closest('form');
+          if (form && !form.hasAttribute('data-metis-app-composer')) form.dataset.metisAppComposer = '';
+        }
+        announceAvailability(Boolean(document.querySelector('[data-metis-app-controls]')));
+      };
+
+      document.addEventListener('click', event => {
+        const target = event.target instanceof Element
+          ? event.target.closest('[data-metis-app-controls]') : null;
+        if (!target || !event.isTrusted) return;
+        event.preventDefault();
+        window.webkit.messageHandlers.metisAppControls.postMessage('menu');
+      });
+
+      let scheduled = false;
+      const observer = new MutationObserver(() => {
+        if (scheduled) return;
+        scheduled = true;
+        requestAnimationFrame(() => {
+          scheduled = false;
+          decorate();
+        });
+      });
+      observer.observe(document.body, { childList: true, subtree: true });
+      window.addEventListener('pageshow', () => {
+        lastAvailability = null;
+        decorate();
+      });
+      decorate();
+    })();
+    """#
+}
+
 private struct WorkspacePresentation: Identifiable {
     let url: URL
     var id: String { url.absoluteString }
@@ -218,8 +513,25 @@ private struct WorkspacePresentation: Identifiable {
 private struct WorkspaceWebView: UIViewRepresentable {
     let webView: WKWebView
 
-    func makeUIView(context: Context) -> WKWebView { webView }
-    func updateUIView(_ uiView: WKWebView, context: Context) {}
+    func makeUIView(context: Context) -> UIView {
+        let container = UIView()
+        // UIKit tracks the complete system input area, including an accessory
+        // that remains visible during rotation without a software key plane.
+        // The web page alone provides home-indicator clearance when it is closed.
+        container.keyboardLayoutGuide.usesBottomSafeArea = false
+        webView.translatesAutoresizingMaskIntoConstraints = false
+        webView.accessibilityIdentifier = "metis.webWorkspace"
+        container.addSubview(webView)
+        NSLayoutConstraint.activate([
+            webView.topAnchor.constraint(equalTo: container.topAnchor),
+            webView.leadingAnchor.constraint(equalTo: container.leadingAnchor),
+            webView.trailingAnchor.constraint(equalTo: container.trailingAnchor),
+            webView.bottomAnchor.constraint(equalTo: container.keyboardLayoutGuide.topAnchor),
+        ])
+        return container
+    }
+
+    func updateUIView(_ uiView: UIView, context: Context) {}
 }
 
 @MainActor

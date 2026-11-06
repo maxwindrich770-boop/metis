@@ -323,6 +323,7 @@ struct ConnectionSettingsView: View {
     let didRemoveCurrentDevice: () -> Void
     let unauthorized: () -> Void
     var title: LocalizedStringKey = "Settings"
+    var close: (() -> Void)? = nil
     @Environment(\.openURL) private var openURL
     @State private var account: String?
     @State private var devices: [MetisRegisteredDevice] = []
@@ -376,6 +377,14 @@ struct ConnectionSettingsView: View {
             }
             .metisScreen()
             .navigationTitle(title)
+            .toolbar {
+                if let close {
+                    ToolbarItem(placement: .confirmationAction) {
+                        Button("Done", action: close)
+                            .accessibilityIdentifier("metis.iPhoneSettingsDone")
+                    }
+                }
+            }
             .task { await load() }
             .refreshable { await load() }
         }

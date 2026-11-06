@@ -38,6 +38,7 @@ function webWorkspaceFixture(username: string, cookieName: string, externalAddre
     <a href="${externalAddress}" target="_blank" rel="noopener">Open the external fixture in a new window</a>
     <button id="scripted-external">Get an API key from the web fixture</button>
     <button id="logout">Sign out from the web fixture</button>
+    <a href="/?fixture=viewport">Open synthetic viewport fixture</a>
     <p id="error" role="alert"></p>
   </main>
   <script>
@@ -106,6 +107,231 @@ function webWorkspaceFixture(username: string, cookieName: string, externalAddre
   </script>
 </body>
 </html>`;
+}
+
+
+// Production-like geometry, deliberately SYNTHETIC: this validates the app/web
+// viewport boundary and sidebar bridge, never the production Metis design.
+function webViewportFixture(username: string) {
+  const expectedUsername = JSON.stringify(username).replaceAll("<", "\\u003c");
+  return `<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <title>SYNTHETIC viewport fixture — not Metis design evidence</title>
+  <style>
+    :root { --background: #f5f3ed; --foreground: #22251f; --popover: #fffdf8; --muted: #e4e5de; }
+    * { box-sizing: border-box; }
+    html, body { margin: 0; height: 100%; overflow: hidden; color: var(--foreground); background: var(--background); font: 17px system-ui; }
+    [hidden] { display: none !important; }
+    button, textarea, a { font: inherit; }
+    button, a { min-height: 44px; min-width: 44px; }
+    button { border: 1px solid #74766c; border-radius: 12px; color: inherit; background: var(--popover); padding: 10px 12px; }
+    a { display: block; padding: 10px 0; }
+    #viewport { position: relative; display: flex; flex-direction: column; width: 100%; height: 100dvh; overflow: hidden; }
+    header { flex: none; display: flex; flex-wrap: wrap; align-items: center; gap: 8px; padding: 8px 12px; border-bottom: 1px solid #cccfc3; background: var(--popover); }
+    header strong { flex: 1; }
+    #dismiss-keyboard { flex-basis: 100%; }
+    #transcript { flex: 1; overflow: auto; min-height: 0; padding: 12px 16px 160px; overscroll-behavior: contain; }
+    #transcript p { margin: 8px 0; }
+    #viewport-metrics, #workspace-metrics, #page-instance { font-size: 11px; overflow-wrap: anywhere; }
+    #focus-state { overflow-wrap: anywhere; }
+    #composer-footer { position: absolute; inset: auto 0 0; padding: 12px 12px max(4px, env(safe-area-inset-bottom)); background: var(--background); }
+    #composer { display: flex; align-items: end; gap: 8px; }
+    #draft { flex: 1; min-width: 0; height: 68px; margin: 0; padding: 12px; border: 1px solid #74766c; border-radius: 18px; color: inherit; background: var(--popover); resize: none; }
+    aside { position: absolute; z-index: 10; inset: 0 auto 0 0; display: flex; flex-direction: column; width: min(88vw, 360px); padding: 12px; background: var(--popover); border-right: 1px solid #74766c; }
+    aside h2 { font-size: 20px; }
+    #sidebar-footer { margin-top: auto; }
+    #sidebar-footer button { width: 100%; text-align: left; }
+    aside.workspace-surface { position: fixed; inset: 0; z-index: 20; width: 100%; border: 0; padding: 0; background: var(--background); }
+    #workspace-content { flex: 1; min-height: 0; overflow: auto; padding: 12px; }
+    #workspace-bottom-control { flex: none; width: 100%; }
+    #safe-area-probe { position: fixed; visibility: hidden; pointer-events: none; padding-bottom: env(safe-area-inset-bottom); }
+    iframe { width: 100%; height: 130px; border: 1px solid #74766c; }
+  </style>
+</head>
+<body>
+  <div id="viewport">
+    <header>
+      <button id="open-sidebar" aria-label="Open sidebar" aria-expanded="false">Chats</button>
+      <strong>SYNTHETIC viewport fixture</strong>
+      <button id="measure-viewport">Measure viewport geometry</button>
+      <button id="dismiss-keyboard">Dismiss keyboard, keep composer focus</button>
+    </header>
+    <main id="transcript" aria-label="Synthetic scrolling transcript">
+      <h1>Synthetic viewport fixture</h1>
+      <button id="open-workspace">Open synthetic workspace panel</button>
+      <p>Integration geometry only. This is not the Metis web design.</p>
+      <p id="session-state" role="status">Checking viewport fixture session…</p>
+      <p id="focus-state" role="status">Composer is not focused</p>
+      <p id="page-instance"></p>
+      <p id="viewport-metrics" role="status"></p>
+      <button id="check-session">Check viewport fixture session</button>
+      <button id="show-subframe">Show same-origin subframe probe</button>
+      <iframe id="subframe" title="Synthetic same-origin bridge probe" hidden></iframe>
+      <p id="subframe-state" role="status"></p>
+      <a href="/">Return to authenticated web workspace fixture</a>
+      <button id="logout">Sign out from the viewport fixture</button>
+      <p id="error" role="alert"></p>
+      ${Array.from({ length: 12 }, (_, index) => `<p>Synthetic transcript row ${index + 1} — scroll content keeps the footer separate from the transcript.</p>`).join("")}
+    </main>
+    <footer id="composer-footer">
+      <form id="composer" aria-label="Synthetic web composer">
+        <textarea id="draft" class="composer-input-area" aria-label="Synthetic viewport draft" placeholder="Synthetic draft"></textarea>
+        <button type="button" id="keep-draft">Keep draft</button>
+      </form>
+    </footer>
+    <aside aria-label="Chats sidebar" hidden>
+      <button id="close-sidebar" aria-label="Close sidebar">Close chats</button>
+      <h2>Synthetic chats</h2>
+      <p>App controls belong beside the web account entry.</p>
+      <div id="sidebar-footer"><button aria-label="Open account menu">Fixture account</button></div>
+    </aside>
+    <aside id="synthetic-workspace" class="workspace-surface" aria-label="Synthetic workspace panel" hidden>
+      <div id="workspace-content">
+        <button id="close-workspace">Close synthetic workspace panel</button>
+        <h2>SYNTHETIC right workspace geometry</h2>
+        <p>Inset probe only; this panel does not implement a terminal or browser.</p>
+        <button id="measure-workspace">Measure workspace geometry</button>
+        <p id="workspace-metrics" role="status"></p>
+      </div>
+      <button id="workspace-bottom-control" type="button">Synthetic workspace bottom control</button>
+    </aside>
+  </div>
+  <div id="safe-area-probe" aria-hidden="true"></div>
+  <script>
+    const expectedUsername = ${expectedUsername};
+    const element = id => document.getElementById(id);
+    const draft = element("draft");
+    const sidebar = document.querySelector('aside[aria-label="Chats sidebar"]');
+    const workspace = element("synthetic-workspace");
+    let revision = 0;
+    let measurementRevision = 0;
+    let draftHasBeenFocused = false;
+    let retainedFocusRequested = false;
+    let retainedFocusVerified = false;
+    const fail = error => { element("error").textContent = String(error.message || error); };
+    element("page-instance").textContent = "Synthetic page instance: " + crypto.randomUUID();
+    async function verifySession() {
+      const response = await fetch("/api/mobile/session", { credentials: "same-origin" });
+      if (!response.ok) throw new Error("Viewport session request failed: " + response.status);
+      const account = await response.json();
+      if (account.username !== expectedUsername) throw new Error("Unexpected viewport session owner");
+      element("session-state").textContent = "Authenticated viewport fixture session";
+    }
+    function updateMetrics() {
+      const focused = document.activeElement === draft;
+      element("focus-state").textContent = focused && retainedFocusRequested && retainedFocusVerified
+        ? "Composer retains focus after keyboard dismissal"
+        : (focused && !retainedFocusRequested ? "Composer retains focus"
+          : "Composer focus probe: " + JSON.stringify({
+            activeElement: document.activeElement?.tagName, activeID: document.activeElement?.id,
+            readonly: draft.readOnly, retainedFocusRequested, retainedFocusVerified, focused,
+          }));
+      const report = "Synthetic viewport metrics: " + JSON.stringify({
+        revision: ++revision, measurementRevision,
+        width: innerWidth, height: innerHeight,
+        safeAreaBottom: parseFloat(getComputedStyle(element("safe-area-probe")).paddingBottom) || 0,
+        composerBottom: draft.getBoundingClientRect().bottom,
+        focused, readonly: draft.readOnly,
+        workspaceOpen: !workspace.hidden,
+        workspacePaddingBottom: parseFloat(getComputedStyle(workspace).paddingBottom) || 0,
+        workspaceControlBottom: element("workspace-bottom-control").getBoundingClientRect().bottom,
+        presentation: {
+          stylePresent: Boolean(document.getElementById("metis-native-app-style")),
+          nativeApp: document.documentElement.dataset.metisNativeApp || null,
+          handlerPresent: Boolean(window.webkit?.messageHandlers?.metisAppControls),
+          controlsCount: document.querySelectorAll("[data-metis-app-controls]").length,
+        },
+      });
+      element("viewport-metrics").textContent = report;
+      element("workspace-metrics").textContent = report;
+    }
+    function scheduleMetrics() { requestAnimationFrame(updateMetrics); }
+    draft.addEventListener("focus", () => { draftHasBeenFocused = true; });
+    for (const event of ["focus", "blur", "input"]) draft.addEventListener(event, scheduleMetrics);
+    window.addEventListener("resize", scheduleMetrics);
+    window.visualViewport?.addEventListener("resize", scheduleMetrics);
+    window.visualViewport?.addEventListener("scroll", scheduleMetrics);
+    function measureGeometry() {
+      // A fresh trusted action samples CSS after WebKit applies its native safe
+      // area, which can change without a window resize during initial display.
+      if (workspace.hidden && draftHasBeenFocused) draft.focus({ preventScroll: true });
+      requestAnimationFrame(() => requestAnimationFrame(() => {
+        measurementRevision++;
+        updateMetrics();
+      }));
+    }
+    element("measure-viewport").addEventListener("mousedown", event => event.preventDefault());
+    element("measure-viewport").addEventListener("click", measureGeometry);
+    element("measure-workspace").addEventListener("click", measureGeometry);
+    element("dismiss-keyboard").addEventListener("mousedown", event => event.preventDefault());
+    element("dismiss-keyboard").addEventListener("click", () => {
+      // Explicitly focus the real readonly textarea after the trusted action.
+      // WebKit may blur a field while dismissing its software keyboard, so the
+      // final marker requires a delayed activeElement measurement.
+      retainedFocusRequested = true;
+      retainedFocusVerified = false;
+      draft.readOnly = true;
+      draft.focus({ preventScroll: true });
+      scheduleMetrics();
+      setTimeout(() => {
+        draft.focus({ preventScroll: true });
+        setTimeout(() => { retainedFocusVerified = true; updateMetrics(); }, 200);
+      }, 300);
+    });
+    function setSidebar(open) {
+      sidebar.hidden = !open;
+      element("open-sidebar").setAttribute("aria-expanded", String(open));
+    }
+    element("open-sidebar").addEventListener("click", () => { setSidebar(true); scheduleMetrics(); });
+    element("open-workspace").addEventListener("click", () => { workspace.hidden = false; scheduleMetrics(); });
+    element("close-workspace").addEventListener("click", () => { workspace.hidden = true; scheduleMetrics(); });
+    element("close-sidebar").addEventListener("click", () => setSidebar(false));
+    element("check-session").addEventListener("click", () => verifySession().catch(fail));
+    element("show-subframe").addEventListener("click", () => {
+      element("subframe").hidden = false;
+      element("subframe").src = "/?fixture=app-controls-subframe";
+    });
+    window.addEventListener("message", event => {
+      if (event.origin === location.origin && event.source === element("subframe").contentWindow
+          && event.data === "synthetic-subframe-menu-posted") {
+        element("subframe-state").textContent = "Same-origin subframe sent menu";
+      }
+    });
+    element("logout").addEventListener("click", async () => {
+      try {
+        const response = await fetch("/api/auth", { method: "DELETE", credentials: "same-origin" });
+        if (!response.ok) throw new Error("Viewport sign-out failed: " + response.status);
+        location.reload();
+      } catch (error) { fail(error); }
+    });
+    element("composer").addEventListener("submit", event => event.preventDefault());
+    verifySession().catch(fail);
+    updateMetrics();
+  </script>
+</body>
+</html>`;
+}
+
+function webAppControlsSubframeFixture() {
+  return `<!doctype html><html lang="en"><head>
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>SYNTHETIC same-origin subframe probe</title>
+    <style>body { font: 15px system-ui; margin: 8px; } button { min-height: 44px; font: inherit; }</style>
+    </head><body>
+    <button id="request-menu">Request iPhone controls from same-origin subframe</button>
+    <p id="state" role="status"></p>
+    <script>
+      document.getElementById("request-menu").addEventListener("click", () => {
+        const handler = window.webkit?.messageHandlers?.metisAppControls;
+        if (!handler) { document.getElementById("state").textContent = "Native bridge unavailable in subframe"; return; }
+        handler.postMessage("menu");
+        parent.postMessage("synthetic-subframe-menu-posted", location.origin);
+      });
+    </script>
+    </body></html>`;
 }
 
 async function main() {
@@ -232,7 +458,11 @@ async function main() {
       if (url.pathname === "/" && method === "GET") {
         const account = getAuthenticatedCookieUser(request);
         const externalAddress = url.origin.replace("localhost", "127.0.0.1") + "/fixture-external";
-        response = account ? new Response(webWorkspaceFixture(account.username, CHAT_COOKIE, externalAddress), {
+        const fixture = url.searchParams.get("fixture");
+        const html = account && (fixture === "viewport" ? webViewportFixture(account.username)
+          : fixture === "app-controls-subframe" ? webAppControlsSubframeFixture()
+          : webWorkspaceFixture(account.username, CHAT_COOKIE, externalAddress));
+        response = account ? new Response(html, {
           headers: { "content-type": "text/html; charset=utf-8", "cache-control": "private, no-store" },
         }) : new Response("The synthetic web fixture requires an authenticated cookie.", {
           status: 401, headers: { "content-type": "text/plain; charset=utf-8", "cache-control": "no-store" },

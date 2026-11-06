@@ -1,6 +1,9 @@
 {
   "sourceLanguage" : "en",
   "strings" : {
+    "iPhone controls" : {"localizations":{"de":{"stringUnit":{"state":"translated","value":"iPhone-Steuerung"}}}},
+    "Close iPhone controls" : {"localizations":{"de":{"stringUnit":{"state":"translated","value":"iPhone-Steuerung schließen"}}}},
+    "Reload" : {"localizations":{"de":{"stringUnit":{"state":"translated","value":"Neu laden"}}}},
     "iPhone settings" : {"localizations":{"de":{"stringUnit":{"state":"translated","value":"iPhone-Einstellungen"}}}},
     "Loading workspace" : {"localizations":{"de":{"stringUnit":{"state":"translated","value":"Arbeitsbereich wird geladen"}}}},
     "Open external website?" : {"localizations":{"de":{"stringUnit":{"state":"translated","value":"Externe Website öffnen?"}}}},

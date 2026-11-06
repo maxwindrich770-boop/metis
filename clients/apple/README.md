@@ -19,11 +19,16 @@ appearance, agent settings, devices and the other sections available to
 your account. Server permissions and discovered model capabilities remain
 authoritative; unavailable options are not invented by the iPhone client.
 
-The small **App** menu opens **iPhone settings** for native Watch/push access,
-connection details and sign-out, plus reload/back/forward. It hides while
-the keyboard is visible. The app restores its session from Keychain after
-restart. Shared-text and shortcut drafts retain their native review composer;
-push/Watch chat links open the corresponding Web chat.
+Open the chat sidebar's **iPhone controls** entry for **iPhone settings**,
+native Watch/push access, connection details, sign-out and reload/back/forward.
+These actions appear in an on-demand native sheet; there is no permanent bottom
+bar. On same-origin pages without the sidebar, a compact native fallback keeps
+the actions reachable. The Web workspace fills the available height through
+the bottom safe area; its CSS owns home-indicator clearance. A native UIKit
+keyboard layout guide keeps the Web view above the actual input surface,
+including a visible accessory bar during rotation. The app restores
+its session from Keychain after restart. Shared-text and shortcut drafts retain
+their native review composer; push/Watch chat links open the corresponding Web chat.
 
 See [Web workspace integration](#web-workspace-integration) for authentication,
 downloads, external sites and verification boundaries.
@@ -71,7 +76,12 @@ watchOS 8 deployment support in Xcode 26.6. A successful source typecheck at
 The native sign-in keeps the Metis palette, labeled fields and original
 vector wordmark. The post-login Web workspace uses the actual server UI and
 its account appearance settings. It is not a separately restyled Swift copy
-of the website. Native device sheets use the device's light/dark appearance.
+of the website. Native device sheets use the device's light/dark appearance. App controls use
+Liquid Glass on iOS 26+, with material controls on older supported iOS releases
+and opaque controls for reduced-transparency or increased-contrast preferences.
+The trusted Web workspace receives app-only translucent header/composer/sidebar
+surfaces using the server's existing color tokens. Server features, parameters
+and account state remain authoritative.
 The previous native chat interface remains available only to Debug regression
 tests with the explicit launch flag `-metis.native-interface`.
 
@@ -116,6 +126,18 @@ server endpoints and report unavailable when those endpoints are absent.
 The Personal Team variant's Push/Share/Watch limitations below still apply.
 A Web surface exposes existing server features; it does not prove every
 provider OAuth flow, device capability or account setting has been exercised.
+
+The Liquid Glass/full-height pass was verified in eight selected Web cases
+across two runs: seven passed in the broader run, then the native settings
+close/draft-preservation case passed after moving its Done action inside the
+settings navigation stack. The geometry case measures the actual system input
+surface from a public XCUITest snapshot and checks portrait, retained web focus,
+landscape, home-indicator clearance and the full-screen workspace. Native sheet
+actions remain at least 44 points in the largest-text test. The subframe bridge,
+fallback entry, session rotation, downloads and popup confirmation are covered.
+These synthetic fixtures remain integration evidence rather than production
+Web-design screenshots. The earlier largest-text sign-in key-plane visibility
+failure and direct watchOS 8 runtime validation remain open.
 
 For focused Mac verification:
 
