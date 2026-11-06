@@ -148,7 +148,9 @@ final class MetisUITests: XCTestCase {
         password.typeText("apple-fixture-only")
         let keyboard = app.keyboards.firstMatch
         XCTAssertTrue(keyboard.waitForExistence(timeout: 5))
-        XCTAssertTrue(keyboard.isHittable, "The software keyboard must be visible and interactive")
+        let keyboardReady = XCTNSPredicateExpectation(predicate: NSPredicate(format: "hittable == true"), object: keyboard)
+        XCTAssertEqual(XCTWaiter.wait(for: [keyboardReady], timeout: 5), .completed,
+                       "The software keyboard must become visible and interactive")
         capture(app, named: "05-login-accessibility-keyboard")
         let signIn = app.buttons["metis.signIn"]
         reveal(signIn, in: app)
