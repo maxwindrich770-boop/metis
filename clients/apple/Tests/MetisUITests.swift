@@ -12,6 +12,7 @@ final class MetisUITests: XCTestCase {
     @MainActor
     func testLoginAndStreamFromFixture() async throws {
         let app = launch()
+        capture(app, named: "01-login-light")
         signIn(app, server: "http://localhost:43100")
         let chat = app.buttons["Fixture chat"]
         XCTAssertTrue(chat.waitForExistence(timeout: 15))
@@ -23,6 +24,7 @@ final class MetisUITests: XCTestCase {
         let ready = XCTNSPredicateExpectation(predicate: NSPredicate(format: "hittable == true"), object: chat)
         let chatReady = await XCTWaiter.fulfillment(of: [ready], timeout: 10)
         XCTAssertEqual(chatReady, .completed, app.debugDescription)
+        capture(app, named: "02-chat-list")
         chat.tap()
         let send = app.buttons["metis.send"]
         let composer = app.descendants(matching: .any)["metis.message"].firstMatch
@@ -74,6 +76,7 @@ final class MetisUITests: XCTestCase {
                       "Visible labels: \(app.staticTexts.allElementsBoundByIndex.map(\.label).joined(separator: " | "))")
         XCTAssertTrue(app.staticTexts["Hello from the iPhone simulator"].exists)
         XCTAssertEqual(app.staticTexts.matching(identifier: "Hello from the iPhone simulator").count, 1)
+        capture(app, named: "03-conversation-and-composer")
         scrollToEarlier(firstMessage, in: transcript)
         app.terminate()
         app.launchArguments = ["-AppleLanguages", "(en)", "-AppleLocale", "en_US"]
@@ -87,6 +90,7 @@ final class MetisUITests: XCTestCase {
         let account = app.descendants(matching: .any)["metis.accountName"].firstMatch
         XCTAssertTrue(account.waitForExistence(timeout: 5), app.debugDescription)
         XCTAssertEqual(account.value as? String, "metis-apple-fixture-alice")
+        capture(app, named: "04-settings")
         app.tabBars.buttons["Chats"].tap()
         XCTAssertTrue(app.navigationBars["Chats"].waitForExistence(timeout: 5))
         XCTAssertTrue(app.staticTexts["Fixture chat"].waitForExistence(timeout: 5))
@@ -110,6 +114,57 @@ final class MetisUITests: XCTestCase {
         XCTAssertTrue(app.buttons["metis.signIn"].waitForExistence(timeout: 5))
         XCTAssertFalse(retry.exists)
         XCTAssertFalse(app.staticTexts["Fixture chat"].exists)
+    }
+
+    @MainActor
+    func testSignInRemainsUsableWithAccessibilityTextAndKeyboard() {
+        continueAfterFailure = false
+        let app = XCUIApplication()
+        app.launchArguments = [
+            "-AppleLanguages", "(en)", "-AppleLocale", "en_US", "-metisServer", "",
+            "-UIPreferredContentSizeCategoryName", "UICTContentSizeCategoryAccessibilityXXXL",
+            "-AppleInterfaceStyle", "Dark"
+        ]
+        app.launch()
+        defer { XCUIDevice.shared.orientation = .portrait }
+        let address = app.textFields["metis.server"]
+        XCTAssertTrue(address.waitForExistence(timeout: 8))
+        address.tap()
+        address.typeText("https://example.invalid")
+        let username = app.textFields["metis.username"]
+        reveal(username, in: app)
+        username.tap()
+        username.typeText("metis-apple-fixture-alice")
+        let password = app.secureTextFields["metis.password"]
+        reveal(password, in: app)
+        password.tap()
+        password.typeText("apple-fixture-only")
+        let signIn = app.buttons["metis.signIn"]
+        reveal(signIn, in: app)
+        XCTAssertGreaterThanOrEqual(signIn.frame.height, 44)
+        XCTAssertTrue(signIn.isEnabled)
+        capture(app, named: "05-login-accessibility-keyboard-dark")
+        XCUIDevice.shared.orientation = .landscapeLeft
+        reveal(signIn, in: app)
+        XCTAssertTrue(signIn.isHittable)
+        capture(app, named: "06-login-landscape-accessibility")
+    }
+
+    @MainActor
+    private func reveal(_ element: XCUIElement, in app: XCUIApplication) {
+        for _ in 0..<8 {
+            if element.isHittable { return }
+            app.swipeUp()
+        }
+        XCTAssertTrue(element.isHittable, app.debugDescription)
+    }
+
+    @MainActor
+    private func capture(_ app: XCUIApplication, named name: String) {
+        let attachment = XCTAttachment(screenshot: app.screenshot())
+        attachment.name = name
+        attachment.lifetime = .keepAlways
+        add(attachment)
     }
 
     private func setFixtureSessionState(_ state: String) async throws {
