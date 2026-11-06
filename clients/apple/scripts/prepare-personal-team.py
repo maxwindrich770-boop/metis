@@ -118,6 +118,9 @@ def prepare(project, objects, root, target_id, target, source_root, team, bundle
             "METIS_PHONE_BUNDLE_ID": bundle_id,
             "PRODUCT_BUNDLE_IDENTIFIER": bundle_id,
             "INFOPLIST_KEY_CFBundleDisplayName": "Metis Test",
+            # Generated from this variant's cleared entitlements, not a Team ID guess.
+            "METIS_PUSH_UNAVAILABLE_REASON": "personal-team",
+            "INFOPLIST_FILE": str(source_root / "MetisiOS/Info.plist"),
         })
     return project
 

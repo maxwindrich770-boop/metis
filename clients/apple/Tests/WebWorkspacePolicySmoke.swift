@@ -12,6 +12,7 @@ struct WebWorkspacePolicySmoke {
             try verifyOrigins()
             try verifyFrames()
             try verifyDownloadNames()
+            try verifyModelPreferences()
             print("Web workspace policy smoke passed")
         } catch {
             FileHandle.standardError.write(Data("Web workspace policy smoke failed: \(error)\n".utf8))
@@ -104,6 +105,53 @@ struct WebWorkspacePolicySmoke {
             try check(!MetisWebPolicy.permitsSubframe(url(candidate), server: server, firstPartySource: true),
                       "A foreign or executable preview frame was accepted: \(candidate)")
         }
+    }
+
+
+    private static func verifyModelPreferences() throws {
+        let opaqueModel = "SYNTHETIC/provider:opaque model 🌱"
+        let validParameters = #"[{"id":"SYNTHETIC parameter","value":"opaque value"}]"#
+        let values = ["tenant-config_model": opaqueModel, "tenant-config_model_params": validParameters]
+        try check(MetisWebPreferencePolicy.sanitized(values) == values,
+                  "Opaque model IDs, parameters, and configurable storage prefixes must round-trip unchanged")
+        try check(MetisWebPreferencePolicy.sanitized([:]) == [:],
+                  "Clearing the preference family must remain representable")
+        try check(MetisWebPreferencePolicy.sanitized(["custom_model_params": "[]"]) != nil,
+                  "An empty parameter selection was rejected")
+        for key in ["x_model", "some-other-prefix_model_params", "🌱_model"] {
+            try check(MetisWebPreferencePolicy.isSupportedKey(key), "A configured preference prefix was rejected")
+        }
+        for key in ["", "_model", "_model_params", "model", "prefix_model_params_extra", "prefix_draft", "auth_token"] {
+            try check(!MetisWebPreferencePolicy.isSupportedKey(key), "An unrelated local storage key was accepted")
+            try check(MetisWebPreferencePolicy.sanitized([key:"SYNTHETIC"]) == nil,
+                      "Unrelated local storage escaped the native allowlist")
+        }
+        for parameters in [
+            "not JSON", "{}", #"{"id":"p","value":"v"}"#, "[1]",
+            #"[{"id":"p"}]"#, #"[{"value":"v"}]"#,
+            #"[{"id":1,"value":"v"}]"#, #"[{"id":"p","value":true}]"#,
+            #"[{"id":"p","value":"v","extra":"field"}]"#,
+        ] {
+            try check(MetisWebPreferencePolicy.sanitized(["custom_model_params":parameters]) == nil,
+                      "A malformed parameter envelope was accepted")
+        }
+        var entries = Dictionary(uniqueKeysWithValues: (0..<MetisWebPreferencePolicy.maximumEntries).map {
+            ("prefix-\($0)_model", opaqueModel)
+        })
+        try check(MetisWebPreferencePolicy.sanitized(entries) != nil, "The documented entry limit was rejected")
+        entries["one-more_model"] = opaqueModel
+        try check(MetisWebPreferencePolicy.sanitized(entries) == nil, "Too many preference entries were accepted")
+
+        let emptySize = try JSONEncoder().encode(["prefix_model":""]).count
+        let boundary = ["prefix_model":String(repeating:"a", count:MetisWebPreferencePolicy.maximumBytes-emptySize)]
+        try check(try JSONEncoder().encode(boundary).count == MetisWebPreferencePolicy.maximumBytes,
+                  "The byte-limit fixture must exercise the encoded boundary")
+        try check(MetisWebPreferencePolicy.sanitized(boundary) != nil, "The encoded byte limit was rejected")
+        let oversized = ["prefix_model":boundary["prefix_model"]! + "a"]
+        try check(MetisWebPreferencePolicy.sanitized(oversized) == nil, "An oversized preference payload was accepted")
+        try check(MetisWebPreferencePolicy.sanitized([
+            "unicode_model":String(repeating:"🌱", count:MetisWebPreferencePolicy.maximumBytes / 4),
+        ]) == nil, "Preference size must count encoded bytes, including Unicode")
     }
 
     private static func verifyDownloadNames() throws {

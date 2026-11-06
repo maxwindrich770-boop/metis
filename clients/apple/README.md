@@ -133,18 +133,39 @@ use a shared material background with an opaque accessibility fallback. App-only
 composer CSS keeps editable text at least 16px to prevent iOS focus autozoom
 while preserving deliberate pinch zoom.
 
+The native session now preserves only the Web UI's model-selection storage
+family (its configured-prefix `_model` and `_model_params` keys). Preferences
+stay bound to the verified origin/session in Keychain and are restored before
+Web UI hydration; cookies and other Web storage remain nonpersistent. Model IDs
+are opaque and the canonical Web UI still validates them and parameter choices
+against the current model catalog. Logout/account switching clears this cache.
+
 Startup uses a neutral session-restoration view until the saved cookie has been
 checked against the server. A network error offers Retry without flashing the
 login form; a revoked or expired session returns to sign-in. No authenticated
 Web content is shown before the server accepts the session.
 
-Thirteen selected Web UI cases passed in one serial simulator run. They cover
-held server verification, offline recovery, revocation, textarea/contenteditable
-font/scale/centering, deliberate pinch zoom, portrait/landscape input geometry,
-native settings/draft preservation, fallback controls, subframe isolation,
-session rotation, downloads and popup confirmation. The geometry checks use an
-immutable public XCUITest snapshot and retain the 2-point assertion; native sheet
-actions remain at least 44 points at the largest text size.
+Twenty selected functional cases are confirmed across focused simulator runs.
+In addition to held server verification, offline recovery, revocation, focus
+scale/centering, pinch, session rotation and external actions, they cover model
+preference restart/rotation/account isolation/removal, canonical profile fallback,
+push availability explanations, full-height sidebar material and safe controls.
+
+The geometry checks use an immutable public XCUITest snapshot and retain the
+2-point assertion. A native video/geometry pass also found a root WebKit focus
+scroll animation that DOM-only probes missed. After keyboard-driven resizing,
+only a fitted, unzoomed root with no user gesture/insets is normalized and stale
+bounds animations are removed; longer pages, gestures and pinch retain their
+behavior. The temporary native diagnostic code is removed from the final source.
+
+Account details use the canonical profile API when the optional mobile session
+endpoint is absent. Missing push-device APIs are explained separately. The
+Personal Team variant declares its intentionally removed push entitlement in an
+explicit Info.plist; build permission, iOS denial, server configuration, missing
+API, network errors and unknown capability versions remain distinct. Push is
+reported enabled only after actual registration succeeds. This variant cannot
+enable real APNs delivery; a push-enabled signed build and configured mobile
+push backend are required.
 
 The fixtures are synthetic integration evidence rather than screenshots of the
 complete live Metis Web UI. The earlier largest-text native sign-in key-plane

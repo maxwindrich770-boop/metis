@@ -21,8 +21,7 @@ struct WebWorkspaceView: View {
 
             WorkspaceWebView(webView: workspace.webView)
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
-                .ignoresSafeArea(.container, edges: .bottom)
-                .ignoresSafeArea(.keyboard, edges: .bottom)
+                .ignoresSafeArea(.container, edges: .vertical)
                 .accessibilityHidden(!hasLoadedWorkspace || workspace.errorMessage != nil)
                 .allowsHitTesting(hasLoadedWorkspace && workspace.errorMessage == nil)
 
@@ -33,6 +32,11 @@ struct WebWorkspaceView: View {
                     .allowsHitTesting(false)
             }
         }
+        // The whole workspace must opt out of SwiftUI keyboard avoidance.
+        // Opting out only the UIKit child still lets its parent move that child
+        // during the transition, even when the DOM and inner WK frame are stable.
+        // UIKit's keyboard guide alone owns the usable web viewport below.
+        .ignoresSafeArea(.keyboard, edges: .bottom)
         .overlay(alignment: .top) {
             if workspace.isLoading && hasLoadedWorkspace && workspace.errorMessage == nil {
                 ProgressView(value: workspace.progress)
@@ -373,6 +377,12 @@ enum MetisAppWebPresentation {
           --metis-app-muted-ink: color-mix(in oklch, var(--muted-foreground) 88%, var(--foreground));
           --metis-app-sidebar-gutter: 0.5rem;
         }
+        /* The web view fills the screen. In-flow content owns one status-bar
+           inset; fixed overlays paint behind it and inset their controls below. */
+        html[data-metis-native-app="ios"] .metis-shell {
+          box-sizing: border-box;
+          padding-top: env(safe-area-inset-top);
+        }
         html[data-metis-native-app="ios"] [data-metis-app-header],
         html[data-metis-native-app="ios"] [data-metis-app-composer] {
           background: var(--metis-app-glass);
@@ -399,9 +409,10 @@ enum MetisAppWebPresentation {
           backdrop-filter: blur(26px) saturate(1.15);
           border-radius: 0 24px 24px 0;
           box-shadow: inset -1px 0 0 var(--metis-app-edge);
+          box-sizing: border-box;
+          padding-top: env(safe-area-inset-top);
         }
-        /* UIKit already clears the status bar. Match the content gutters at
-           both ends; only the bottom still needs the web's home-indicator inset. */
+        /* Match the content gutters inside the system-safe area. */
         html[data-metis-native-app="ios"] aside[aria-label="Chats sidebar"] [aria-label="Metis"]:not([role="img"]) {
           padding-top: var(--metis-app-sidebar-gutter);
           padding-bottom: var(--metis-app-sidebar-gutter);
@@ -429,9 +440,17 @@ enum MetisAppWebPresentation {
         html[data-metis-native-app="ios"] .composer-input-area [contenteditable="true"] {
           font-size: max(16px, 1rem);
         }
+        /* UIKit already removes the keyboard from the web viewport. The
+           server's transient visualViewport bottom offset must not remove it twice. */
+        html[data-metis-native-app="ios"] [data-metis-app-composer-dock]:focus-within {
+          bottom: 0 !important;
+        }
         html[data-metis-native-app="ios"] aside.workspace-surface {
           box-sizing: border-box;
           padding-bottom: env(safe-area-inset-bottom);
+        }
+        html[data-metis-native-app="ios"] [data-metis-app-workspace-overlay] {
+          padding-top: env(safe-area-inset-top);
         }
         html[data-metis-native-app="ios"] [data-metis-app-controls] {
           display: flex;
@@ -537,6 +556,16 @@ enum MetisAppWebPresentation {
         for (const input of document.querySelectorAll('.composer-input-area')) {
           const form = input.closest('form');
           if (form && !form.hasAttribute('data-metis-app-composer')) form.dataset.metisAppComposer = '';
+          const dock = form?.closest('[class~="pointer-events-none"][class~="z-20"][class~="w-full"]');
+          if (dock && !dock.hasAttribute('data-metis-app-composer-dock')) dock.dataset.metisAppComposerDock = '';
+        }
+        for (const panel of document.querySelectorAll('aside.workspace-surface')) {
+          const position = getComputedStyle(panel).position;
+          if (position === 'fixed' || position === 'absolute') {
+            if (!panel.hasAttribute('data-metis-app-workspace-overlay')) panel.dataset.metisAppWorkspaceOverlay = '';
+          } else {
+            delete panel.dataset.metisAppWorkspaceOverlay;
+          }
         }
         // Settings can be a full account page on phones or a dialog on wider
         // layouts. Decorate only their existing semantic surface, never all dialogs.
@@ -566,15 +595,17 @@ enum MetisAppWebPresentation {
       });
 
       let scheduled = false;
-      const observer = new MutationObserver(() => {
+      const scheduleDecoration = () => {
         if (scheduled) return;
         scheduled = true;
         requestAnimationFrame(() => {
           scheduled = false;
           decorate();
         });
-      });
+      };
+      const observer = new MutationObserver(scheduleDecoration);
       observer.observe(document.body, { childList: true, subtree: true });
+      window.addEventListener('resize', scheduleDecoration);
       window.addEventListener('pageshow', () => {
         lastAvailability = null;
         decorate();
@@ -594,24 +625,128 @@ private struct WorkspaceWebView: UIViewRepresentable {
     let webView: WKWebView
 
     func makeUIView(context: Context) -> UIView {
-        let container = UIView()
-        // UIKit tracks the complete system input area, including an accessory
-        // that remains visible during rotation without a software key plane.
-        // The web page alone provides home-indicator clearance when it is closed.
-        container.keyboardLayoutGuide.usesBottomSafeArea = false
-        webView.translatesAutoresizingMaskIntoConstraints = false
-        webView.accessibilityIdentifier = "metis.webWorkspace"
-        container.addSubview(webView)
-        NSLayoutConstraint.activate([
-            webView.topAnchor.constraint(equalTo: container.topAnchor),
-            webView.leadingAnchor.constraint(equalTo: container.leadingAnchor),
-            webView.trailingAnchor.constraint(equalTo: container.trailingAnchor),
-            webView.bottomAnchor.constraint(equalTo: container.keyboardLayoutGuide.topAnchor),
-        ])
-        return container
+        WorkspaceWebContainer(webView: webView)
     }
 
     func updateUIView(_ uiView: UIView, context: Context) {}
+}
+
+/// UIKit determines the usable viewport, while WebKit receives its settled
+/// geometry without inheriting the keyboard's animation on the entire page.
+@MainActor
+private final class WorkspaceWebContainer: UIView {
+    private let webView: WKWebView
+    private let viewportGuide = UILayoutGuide()
+    private var viewportScrollObservations: [NSKeyValueObservation] = []
+    private var viewportFocusScrollPending = false
+    private var correctingViewportFocusScroll = false
+    private var viewportFocusScrollLink: CADisplayLink?
+    private var viewportFocusScrollFrames = 0
+
+
+    init(webView: WKWebView) {
+        self.webView = webView
+        super.init(frame: .zero)
+        // Keep tracking the full input surface, including an accessory retained
+        // during rotation. The page alone clears the closed home indicator.
+        keyboardLayoutGuide.usesBottomSafeArea = false
+        addLayoutGuide(viewportGuide)
+        NSLayoutConstraint.activate([
+            viewportGuide.topAnchor.constraint(equalTo: topAnchor),
+            viewportGuide.leadingAnchor.constraint(equalTo: leadingAnchor),
+            viewportGuide.trailingAnchor.constraint(equalTo: trailingAnchor),
+            viewportGuide.bottomAnchor.constraint(equalTo: keyboardLayoutGuide.topAnchor),
+        ])
+        webView.accessibilityIdentifier = "metis.webWorkspace"
+        addSubview(webView)
+        // UIKit/WebKit view geometry changes occur on the main thread. Observe
+        // the web process's later content-size/offset update, not just our frame.
+        viewportScrollObservations = [
+            webView.scrollView.observe(\.contentSize, options: [.new]) { [weak self] _, _ in
+                MainActor.assumeIsolated { self?.reconcileViewportFocusScroll() }
+            },
+            webView.scrollView.observe(\.contentOffset, options: [.new]) { [weak self] _, _ in
+                MainActor.assumeIsolated { self?.reconcileViewportFocusScroll() }
+            },
+        ]
+    }
+
+    required init?(coder: NSCoder) { return nil }
+
+    override func layoutSubviews() {
+        super.layoutSubviews()
+        let viewport = viewportGuide.layoutFrame
+        guard webView.frame != viewport else {
+            reconcileViewportFocusScroll()
+            return
+        }
+        if abs(webView.frame.width - viewport.width) > 0.5 {
+            finishViewportFocusScroll()
+        } else if viewport.height < webView.frame.height - 0.5,
+                  keyboardLayoutGuide.layoutFrame.height > 0 {
+            viewportFocusScrollPending = true
+        }
+        // Only the viewport resize is immediate. Keyboard motion, web scrolling
+        // and all unrelated app/web animations retain their normal behavior.
+        UIView.performWithoutAnimation {
+            webView.frame = viewport
+            webView.layoutIfNeeded()
+        }
+        reconcileViewportFocusScroll()
+    }
+
+    private func reconcileViewportFocusScroll() {
+        guard viewportFocusScrollPending, !correctingViewportFocusScroll else { return }
+        let scroll = webView.scrollView
+        let pinch = scroll.pinchGestureRecognizer?.state
+        guard !scroll.isTracking, !scroll.isDragging, !scroll.isDecelerating,
+              pinch != .began, pinch != .changed,
+              abs(scroll.zoomScale - 1) < 0.001 else {
+            finishViewportFocusScroll()
+            return
+        }
+        // A fitted app viewport has no legitimate root scroll range. Longer
+        // documents, custom insets, and deliberate zoom retain WebKit behavior.
+        guard scroll.contentInset == .zero, scroll.adjustedContentInset == .zero,
+              scroll.contentSize.width <= scroll.bounds.width + 0.5,
+              scroll.contentSize.height <= scroll.bounds.height + 0.5 else { return }
+        correctingViewportFocusScroll = true
+        UIView.performWithoutAnimation {
+            if scroll.contentOffset != .zero {
+                scroll.setContentOffset(.zero, animated: false)
+            }
+            // WebKit can clamp the model offset after resizing while a previous
+            // focus-scroll bounds animation still presents a negative origin.
+            for key in scroll.layer.animationKeys() ?? [] {
+                guard let animation = scroll.layer.animation(forKey: key) as? CAPropertyAnimation,
+                      let path = animation.keyPath,
+                      path == "bounds" || path == "bounds.origin" ||
+                        path == "bounds.origin.x" || path == "bounds.origin.y" else { continue }
+                scroll.layer.removeAnimation(forKey: key)
+            }
+        }
+        correctingViewportFocusScroll = false
+        if viewportFocusScrollLink == nil {
+            viewportFocusScrollFrames = 2
+            let link = CADisplayLink(target: self, selector: #selector(finishViewportFocusScrollFrame(_:)))
+            viewportFocusScrollLink = link
+            link.add(to: .main, forMode: .common)
+        }
+    }
+
+    @objc private func finishViewportFocusScrollFrame(_ link: CADisplayLink) {
+        reconcileViewportFocusScroll()
+        viewportFocusScrollFrames -= 1
+        if viewportFocusScrollFrames <= 0 { finishViewportFocusScroll() }
+    }
+
+    private func finishViewportFocusScroll() {
+        viewportFocusScrollLink?.invalidate()
+        viewportFocusScrollLink = nil
+        viewportFocusScrollPending = false
+    }
+
+
 }
 
 @MainActor

@@ -11,6 +11,7 @@ PRODUCT_BUNDLE_IDENTIFIER = $(METIS_PHONE_BUNDLE_ID)
 MARKETING_VERSION = 0.1.0
 CURRENT_PROJECT_VERSION = 1
 GENERATE_INFOPLIST_FILE = YES
+INFOPLIST_FILE = MetisiOS/Info.plist
 INFOPLIST_KEY_UIApplicationSceneManifest_Generation = YES
 INFOPLIST_KEY_UILaunchScreen_Generation = YES
 INFOPLIST_KEY_NSLocalNetworkUsageDescription = Connect to your self-hosted Metis server on your local network.
@@ -19,5 +20,5 @@ INFOPLIST_KEY_NSCameraUsageDescription = Take a photo to attach to a Metis messa
 INFOPLIST_KEY_NSMicrophoneUsageDescription = Record audio for Metis voice input when you choose the microphone.
 METIS_APNS_ENVIRONMENT = production
 METIS_APNS_ENTITLEMENT = production
-INFOPLIST_KEY_MetisAPNSEnvironment = $(METIS_APNS_ENVIRONMENT)
+METIS_PUSH_UNAVAILABLE_REASON =
 CODE_SIGN_ENTITLEMENTS[sdk=iphoneos*] = MetisiOS/Metis.entitlements

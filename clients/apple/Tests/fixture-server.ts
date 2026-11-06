@@ -40,6 +40,7 @@ function webWorkspaceFixture(username: string, cookieName: string, externalAddre
     <button id="logout">Sign out from the web fixture</button>
     <a href="/?fixture=viewport">Open synthetic viewport fixture</a>
     <a href="/?fixture=composer-zoom">Open synthetic contenteditable composer fixture</a>
+    <a href="/?fixture=model-preferences">Open synthetic model preference storage fixture</a>
     <p id="error" role="alert"></p>
   </main>
   <script>
@@ -111,6 +112,40 @@ function webWorkspaceFixture(username: string, cookieName: string, externalAddre
 }
 
 
+// Storage plumbing only. These values deliberately do not identify a model or
+// imply provider capabilities; the production web UI validates its own catalog.
+function webModelPreferenceFixture() {
+  return `<!doctype html><html lang="en"><head>
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>SYNTHETIC model preference storage probe</title>
+    <style>body { font:17px system-ui; padding:20px; } button,a { display:block; min-height:44px; margin:12px 0; font:inherit; } p { overflow-wrap:anywhere; }</style>
+    </head><body>
+    <h1>SYNTHETIC model preference storage probe</h1>
+    <p>Storage transport only; these example strings are not provider model IDs.</p>
+    <button id="set-preferences">Store synthetic model preferences</button>
+    <button id="remove-model">Remove synthetic model selection</button>
+    <button id="clear-preferences">Clear synthetic local storage</button>
+    <p id="preferences" role="status"></p>
+    <a href="/">Return to authenticated web workspace fixture</a>
+    <script>
+      const keys = { model: "metis-ai_model", parameters: "metis-ai_model_params", unrelated: "metis-ai_fixture_draft" };
+      const read = () => Object.fromEntries(Object.entries(keys).map(([name,key]) => [name,localStorage.getItem(key)]));
+      const atScriptStart = read();
+      const report = () => {
+        document.getElementById("preferences").textContent = "Synthetic model preference storage: " + JSON.stringify({ atScriptStart, current:read() });
+      };
+      document.getElementById("set-preferences").addEventListener("click", () => {
+        localStorage.setItem(keys.model, "SYNTHETIC selection example");
+        localStorage.setItem(keys.parameters, JSON.stringify([{ id:"syntheticPreference", value:"example" }]));
+        localStorage.setItem(keys.unrelated, "SYNTHETIC unsent draft must not persist");
+        report();
+      });
+      document.getElementById("remove-model").addEventListener("click", () => { localStorage.removeItem(keys.model); report(); });
+      document.getElementById("clear-preferences").addEventListener("click", () => { localStorage.clear(); report(); });
+      report();
+    </script></body></html>`;
+}
+
 // Production-like geometry, deliberately SYNTHETIC: this validates the app/web
 // viewport boundary and sidebar bridge, never the production Metis design.
 function webViewportFixture(username: string, contentEditableComposer = false) {
@@ -143,19 +178,19 @@ function webViewportFixture(username: string, contentEditableComposer = false) {
     /* Same class-level baseline as production; the app must prevent focus zoom. */
     .composer-input-area { font-size: 15px; }
     #draft { flex: 1; min-width: 0; height: 68px; margin: 0; padding: 12px; border: 1px solid #74766c; border-radius: 18px; color: inherit; background: var(--popover); resize: none; overflow: auto; }
-    aside { position: absolute; z-index: 10; inset: 0 auto 0 0; display: flex; flex-direction: column; width: min(88vw, 360px); padding: 12px; background: var(--popover); border-right: 1px solid #74766c; }
+    aside { position: fixed; z-index: 10; inset: 0 auto 0 0; display: flex; flex-direction: column; width: min(88vw, 360px); padding: 12px; background: var(--popover); border-right: 1px solid #74766c; }
     aside h2 { font-size: 20px; }
     #sidebar-footer { margin-top: auto; }
     #sidebar-footer button { width: 100%; text-align: left; }
     aside.workspace-surface { position: fixed; inset: 0; z-index: 20; width: 100%; border: 0; padding: 0; background: var(--background); }
     #workspace-content { flex: 1; min-height: 0; overflow: auto; padding: 12px; }
     #workspace-bottom-control { flex: none; width: 100%; }
-    #safe-area-probe { position: fixed; visibility: hidden; pointer-events: none; padding-bottom: env(safe-area-inset-bottom); }
-    iframe { width: 100%; height: 130px; border: 1px solid #74766c; }
+    #safe-area-probe { position: fixed; visibility: hidden; pointer-events: none; padding-top: env(safe-area-inset-top); padding-bottom: env(safe-area-inset-bottom); }
+    iframe { width: 100%; height: 220px; border: 1px solid #74766c; }
   </style>
 </head>
 <body>
-  <div id="viewport">
+  <div id="viewport" class="metis-shell">
     <header>
       <button id="open-sidebar" aria-label="Open sidebar" aria-expanded="false">Chats</button>
       <strong>SYNTHETIC viewport fixture</strong>
@@ -168,6 +203,7 @@ function webViewportFixture(username: string, contentEditableComposer = false) {
       <p>Integration geometry only. This is not the Metis web design.</p>
       <p id="session-state" role="status">Checking viewport fixture session…</p>
       <p id="focus-state" role="status">Composer is not focused</p>
+      <p id="keyboard-transition" role="status">Synthetic keyboard transition not sampled</p>
       <p id="page-instance"></p>
       <p id="viewport-metrics" role="status"></p>
       <button id="check-session">Check viewport fixture session</button>
@@ -179,7 +215,7 @@ function webViewportFixture(username: string, contentEditableComposer = false) {
       <p id="error" role="alert"></p>
       ${Array.from({ length: 12 }, (_, index) => `<p>Synthetic transcript row ${index + 1} — scroll content keeps the footer separate from the transcript.</p>`).join("")}
     </main>
-    <footer id="composer-footer">
+    <footer id="composer-footer" class="pointer-events-none z-20 w-full">
       <form id="composer" aria-label="Synthetic web composer">
         ${contentEditableComposer
           ? '<div id="draft" class="composer-input-area" contenteditable="true" role="textbox" aria-multiline="true" aria-label="Synthetic viewport draft" tabindex="0"></div>'
@@ -187,9 +223,11 @@ function webViewportFixture(username: string, contentEditableComposer = false) {
         <button type="button" id="keep-draft">Keep draft</button>
       </form>
     </footer>
-    <aside aria-label="Chats sidebar" hidden>
+    <aside class="fixed inset-y-0 left-0" aria-label="Chats sidebar" hidden>
+      <a href="/" aria-label="Metis">SYNTHETIC Metis brand</a>
       <button id="close-sidebar" aria-label="Close sidebar">Close chats</button>
       <h2>Synthetic chats</h2>
+      <button id="measure-sidebar">Measure sidebar geometry</button>
       <p>App controls belong beside the web account entry.</p>
       <div id="sidebar-footer"><button aria-label="Open account menu">Fixture account</button></div>
     </aside>
@@ -238,6 +276,14 @@ function webViewportFixture(username: string, contentEditableComposer = false) {
         revision: ++revision, measurementRevision,
         width: innerWidth, height: innerHeight,
         safeAreaBottom: parseFloat(getComputedStyle(element("safe-area-probe")).paddingBottom) || 0,
+        safeAreaTop: parseFloat(getComputedStyle(element("safe-area-probe")).paddingTop) || 0,
+        shellHeight: element("viewport").getBoundingClientRect().height,
+        headerTop: document.querySelector("header").getBoundingClientRect().top,
+        sidebarTop: sidebar.getBoundingClientRect().top,
+        sidebarHeight: sidebar.getBoundingClientRect().height,
+        sidebarBrandTop: sidebar.querySelector('[aria-label="Metis"]').getBoundingClientRect().top,
+        sidebarCloseTop: element("close-sidebar").getBoundingClientRect().top,
+        composerDockBottom: parseFloat(getComputedStyle(element("composer-footer")).bottom),
         composerBottom: draft.getBoundingClientRect().bottom,
         composerCenterX: (element("composer").getBoundingClientRect().left + element("composer").getBoundingClientRect().right) / 2,
         composerFontSize: parseFloat(getComputedStyle(draft).fontSize),
@@ -259,7 +305,48 @@ function webViewportFixture(username: string, contentEditableComposer = false) {
       element("workspace-metrics").textContent = report;
     }
     function scheduleMetrics() { requestAnimationFrame(updateMetrics); }
-    draft.addEventListener("focus", () => { draftHasBeenFocused = true; });
+    // Record the transition from the trusted touch before focus starts. This
+    // measures DOM geometry every frame rather than only its settled endpoint.
+    let transitionRevision = 0;
+    let dockOffsetAttempts = 0;
+    draft.addEventListener("pointerdown", () => {
+      const revision = ++transitionRevision;
+      const started = performance.now();
+      const samples = [];
+      function sample(now) {
+        if (revision !== transitionRevision) return;
+        const header = document.querySelector("header").getBoundingClientRect();
+        samples.push({
+          headerTop: header.top, headerBottom: header.bottom,
+          transcriptScrollTop: element("transcript").scrollTop, documentScrollY: scrollY,
+          shellHeightDelta: element("viewport").getBoundingClientRect().height - innerHeight,
+        });
+        if (now - started < 700 || samples.length < 12) { requestAnimationFrame(sample); return; }
+        const range = key => Math.max(...samples.map(item => item[key])) - Math.min(...samples.map(item => item[key]));
+        element("keyboard-transition").textContent = "Synthetic keyboard transition: " + JSON.stringify({
+          revision, frames:samples.length, duration:now-started,
+          headerTopRange:range("headerTop"), headerBottomRange:range("headerBottom"),
+          transcriptScrollRange:range("transcriptScrollTop"), documentScrollRange:range("documentScrollY"),
+          maxShellHeightError:Math.max(...samples.map(item=>Math.abs(item.shellHeightDelta))),
+          dockOffsetAttempts,
+        });
+      }
+      sample(started);
+    });
+    draft.addEventListener("focus", () => {
+      draftHasBeenFocused = true;
+      // Mirror the real web dock's transient keyboard-offset writes. The app's
+      // first-party override must prevent this second subtraction of the IME.
+      dockOffsetAttempts = 0;
+      function writeTransientOffset() {
+        if (document.activeElement !== draft || dockOffsetAttempts >= 18) return;
+        element("composer-footer").style.bottom = "120px";
+        dockOffsetAttempts++;
+        requestAnimationFrame(writeTransientOffset);
+      }
+      writeTransientOffset();
+    });
+    draft.addEventListener("blur", () => { element("composer-footer").style.bottom = "0px"; });
     for (const event of ["focus", "blur", "input"]) draft.addEventListener(event, scheduleMetrics);
     window.addEventListener("resize", scheduleMetrics);
     window.visualViewport?.addEventListener("resize", scheduleMetrics);
@@ -276,6 +363,7 @@ function webViewportFixture(username: string, contentEditableComposer = false) {
     element("measure-viewport").addEventListener("mousedown", event => event.preventDefault());
     element("measure-viewport").addEventListener("click", measureGeometry);
     element("measure-workspace").addEventListener("click", measureGeometry);
+    element("measure-sidebar").addEventListener("click", measureGeometry);
     element("dismiss-keyboard").addEventListener("mousedown", event => event.preventDefault());
     element("dismiss-keyboard").addEventListener("click", () => {
       // Explicitly focus the real readonly textarea after the trusted action.
@@ -298,7 +386,7 @@ function webViewportFixture(username: string, contentEditableComposer = false) {
     element("open-sidebar").addEventListener("click", () => { setSidebar(true); scheduleMetrics(); });
     element("open-workspace").addEventListener("click", () => { workspace.hidden = false; scheduleMetrics(); });
     element("close-workspace").addEventListener("click", () => { workspace.hidden = true; scheduleMetrics(); });
-    element("close-sidebar").addEventListener("click", () => setSidebar(false));
+    element("close-sidebar").addEventListener("click", () => { setSidebar(false); scheduleMetrics(); });
     element("check-session").addEventListener("click", () => verifySession().catch(fail));
     element("show-subframe").addEventListener("click", () => {
       element("subframe").hidden = false;
@@ -332,8 +420,15 @@ function webAppControlsSubframeFixture() {
     <style>body { font: 15px system-ui; margin: 8px; } button { min-height: 44px; font: inherit; }</style>
     </head><body>
     <button id="request-menu">Request iPhone controls from same-origin subframe</button>
+    <button id="request-preferences">Post model preferences from same-origin subframe</button>
     <p id="state" role="status"></p>
     <script>
+      document.getElementById("request-preferences").addEventListener("click", () => {
+        const handler = window.webkit?.messageHandlers?.metisModelPreferences;
+        if (!handler) { document.getElementById("state").textContent = "Model preference bridge unavailable"; return; }
+        handler.postMessage({ "metis-ai_model":"SYNTHETIC forbidden subframe selection", "metis-ai_model_params":"[]" });
+        document.getElementById("state").textContent = "Same-origin subframe posted model preferences";
+      });
       document.getElementById("request-menu").addEventListener("click", () => {
         const handler = window.webkit?.messageHandlers?.metisAppControls;
         if (!handler) { document.getElementById("state").textContent = "Native bridge unavailable in subframe"; return; }
@@ -379,6 +474,8 @@ async function main() {
   const projects = await import("../../../app/api/projects/route");
   const mobileDevices = await import("../../../app/api/mobile/devices/route");
   const mobileSession = await import("../../../app/api/mobile/session/route");
+  const profile = await import("../../../app/api/profile/route");
+  const mobileCapabilities = await import("../../../app/api/mobile/capabilities/route");
   const { upsertProviderConnection } = await import("../../../lib/provider-connections");
   const { claimNextJob } = await import("../../../lib/db-jobs");
   const { runJobById } = await import("../../../lib/worker-runner");
@@ -412,6 +509,9 @@ async function main() {
   const droppedReplies = new Set<string>();
   let delayedHistory: { chatId: string; jobId: string } | undefined;
   let offline = false;
+  let mobileProfileUnavailable = false;
+  let fallbackProfileReads = 0;
+  let unknownCapabilitiesVersion = false;
   // This gate belongs only to the disposable loopback fixture. The UI test
   // releases it explicitly after observing startup, rather than racing a timer.
   let holdSessionVerification = false;
@@ -424,12 +524,17 @@ async function main() {
       const method = incoming.method;
       if (url.pathname === "/fixture-control" && method === "GET") {
         outgoing.writeHead(200, { "content-type": "application/json", "cache-control": "no-store" });
-        outgoing.end(JSON.stringify({ holdSessionVerification, heldSessionRequests: heldSessionVerifications.size }));
+        outgoing.end(JSON.stringify({ holdSessionVerification, heldSessionRequests: heldSessionVerifications.size, fallbackProfileReads }));
         return;
       }
       if (url.pathname === "/fixture-control" && method === "POST") {
         const state = url.searchParams.get("state");
         if (state === "offline" || state === "online") offline = state === "offline";
+        else if (state === "profile-fallback" || state === "profile-mobile") {
+          mobileProfileUnavailable = state === "profile-fallback";
+          fallbackProfileReads = 0;
+        }
+        else if (state === "capabilities-unknown" || state === "capabilities-current") unknownCapabilitiesVersion = state === "capabilities-unknown";
         else if (state === "hold-session") holdSessionVerification = true;
         else if (state === "release-session") {
           holdSessionVerification = false;
@@ -499,6 +604,7 @@ async function main() {
         const fixture = url.searchParams.get("fixture");
         const html = account && (fixture === "viewport" || fixture === "composer-zoom"
           ? webViewportFixture(account.username, fixture === "composer-zoom")
+          : fixture === "model-preferences" ? webModelPreferenceFixture()
           : fixture === "app-controls-subframe" ? webAppControlsSubframeFixture()
           : webWorkspaceFixture(account.username, CHAT_COOKIE, externalAddress));
         response = account ? new Response(html, {
@@ -564,9 +670,18 @@ async function main() {
       else if (url.pathname === "/api/models" && method === "GET") response = await models.GET(request);
       else if (url.pathname === "/api/notifications/inbox" && method === "GET") response = await notifications.GET(request);
       else if (url.pathname === "/api/projects" && method === "GET") response = await projects.GET(request);
+      else if (url.pathname === "/api/profile" && method === "GET") {
+        if (mobileProfileUnavailable) fallbackProfileReads++;
+        response = await profile.GET(request);
+      }
+      else if (url.pathname === "/api/mobile/capabilities" && method === "GET") {
+        response = await mobileCapabilities.GET(request);
+        if (response.ok && unknownCapabilitiesVersion) response = Response.json({ version: 999, apns: true });
+      }
       else if (url.pathname === "/api/mobile/devices" && method === "GET") response = await mobileDevices.GET(request);
       else if (url.pathname === "/api/mobile/session" && (method === "GET" || method === "POST" || method === "DELETE")) {
-        response = await mobileSession[method](request);
+        response = method === "GET" && mobileProfileUnavailable
+          ? new Response(null, { status: 404 }) : await mobileSession[method](request);
       }
       else if (url.pathname === "/api/chat/cancel" && method === "POST") response = await cancel.POST(request);
       else if (url.pathname === "/api/file-uploads" && method === "POST") response = await fileUploads.POST(request);

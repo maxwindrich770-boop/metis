@@ -232,6 +232,128 @@ final class MetisUITests: XCTestCase {
     }
 
     @MainActor
+    func testSyntheticWebModelPreferencesSurviveRestartRotationAndAccountIsolation() throws {
+        let app = launch()
+        signIn(app, server: "http://localhost:43100")
+        var web = openSyntheticModelPreferenceFixture(in: app)
+        web.buttons["Store synthetic model preferences"].tap()
+        let written = try syntheticModelPreferences(in: web).current
+        XCTAssertNotNil(written.model)
+        XCTAssertNotNil(written.parameters)
+        XCTAssertNotNil(written.unrelated, "The probe also writes a draft outside the native allowlist")
+        web = restartIntoSyntheticModelPreferences(in: app)
+        try assertSyntheticPreferences(in: web, match: written)
+        web.links["Return to authenticated web workspace fixture"].tap()
+        web = authenticatedWebWorkspace(in: app)
+        let rotate = web.buttons["Rotate the web session"]
+        reveal(rotate, in: app)
+        rotate.tap()
+        XCTAssertTrue(web.staticTexts["Session rotated in web fixture"].waitForExistence(timeout: 15))
+        web = restartIntoSyntheticModelPreferences(in: app)
+        try assertSyntheticPreferences(in: web, match: written)
+        web.links["Return to authenticated web workspace fixture"].tap()
+        signOutFromWebFixture(in: app, web: authenticatedWebWorkspace(in: app))
+        for username in ["metis-apple-fixture-bob", "metis-apple-fixture-alice"] {
+            app.terminate()
+            app.launchArguments = ["-AppleLanguages", "(en)", "-AppleLocale", "en_US", "-metisServer", ""]
+            app.launch()
+            signIn(app, server: "http://localhost:43100", username: username)
+            web = openSyntheticModelPreferenceFixture(in: app)
+            try assertSyntheticPreferencesAreEmpty(in: web)
+            web.links["Return to authenticated web workspace fixture"].tap()
+            signOutFromWebFixture(in: app, web: authenticatedWebWorkspace(in: app))
+        }
+    }
+
+    @MainActor
+    func testSyntheticWebModelPreferenceRemovalAndClearSurviveRestart() throws {
+        let app = launch()
+        signIn(app, server: "http://localhost:43100")
+        var web = openSyntheticModelPreferenceFixture(in: app)
+        web.buttons["Store synthetic model preferences"].tap()
+        let written = try syntheticModelPreferences(in: web).current
+        web.buttons["Remove synthetic model selection"].tap()
+        XCTAssertNil(try syntheticModelPreferences(in: web).current.model)
+        web = restartIntoSyntheticModelPreferences(in: app)
+        let removed = try syntheticModelPreferences(in: web)
+        XCTAssertNil(removed.atScriptStart.model)
+        XCTAssertNil(removed.current.model)
+        XCTAssertEqual(removed.atScriptStart.parameters, written.parameters)
+        XCTAssertNil(removed.current.unrelated)
+        web.buttons["Clear synthetic local storage"].tap()
+        web = restartIntoSyntheticModelPreferences(in: app)
+        try assertSyntheticPreferencesAreEmpty(in: web)
+        web.links["Return to authenticated web workspace fixture"].tap()
+        signOutFromWebFixture(in: app, web: authenticatedWebWorkspace(in: app))
+    }
+
+    @MainActor
+    func testAccountDetailsUseCanonicalProfileWhenMobileSessionEndpointIsUnavailable() async throws {
+        try await setFixtureSessionState("profile-fallback")
+        addTeardownBlock { try await self.setFixtureSessionState("profile-mobile") }
+        let app = launch(nativeInterface: true)
+        signIn(app, server: "http://localhost:43100")
+        XCTAssertTrue(app.buttons["Fixture chat"].waitForExistence(timeout: 15))
+        app.tabBars.buttons["Settings"].tap()
+        let account = app.descendants(matching: .any)["metis.accountName"].firstMatch
+        XCTAssertTrue(account.waitForExistence(timeout: 10), app.debugDescription)
+        XCTAssertEqual(account.value as? String, "metis-apple-fixture-alice",
+                       "A missing optional mobile endpoint must use the authenticated canonical profile")
+        let (data, response) = try await URLSession.shared.data(from: fixtureControlURL())
+        XCTAssertEqual((response as? HTTPURLResponse)?.statusCode, 200)
+        struct ProfileControl: Decodable { let fallbackProfileReads: Int }
+        XCTAssertGreaterThan(try JSONDecoder().decode(ProfileControl.self, from: data).fallbackProfileReads, 0)
+        capture(app, named: "native-account-canonical-profile-with-mobile-endpoint-unavailable")
+    }
+
+    @MainActor
+    func testUnavailablePushExplainsRestrictionWithoutSendingUserToSettings() {
+        let app = launch(nativeInterface: true)
+        signIn(app, server: "http://localhost:43100")
+        XCTAssertTrue(app.buttons["Fixture chat"].waitForExistence(timeout: 15))
+        app.tabBars.buttons["Settings"].tap()
+        let push = app.buttons.matching(NSPredicate(format: "label BEGINSWITH %@", "Push alerts")).firstMatch
+        reveal(push, in: app)
+        push.tap()
+        XCTAssertTrue(app.navigationBars["Push alerts"].waitForExistence(timeout: 5))
+        let explanation = app.descendants(matching: .any)["metis.pushAvailability"].firstMatch
+        XCTAssertTrue(explanation.waitForExistence(timeout: 10), app.debugDescription)
+        XCTAssertFalse(explanation.label.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+        let enable = app.buttons["metis.changePush"]
+        reveal(enable, in: app)
+        XCTAssertFalse(enable.isEnabled, "Unavailable build or backend push support must keep registration disabled")
+        XCTAssertFalse(app.buttons["Open iPhone Settings"].isHittable,
+                       "A build or server restriction cannot be repaired in iPhone notification settings")
+        // The Personal Team variant uses the same flow and must explain the
+        // missing signing entitlement explicitly when that build marker is set.
+        if explanation.label.contains("test build") {
+            XCTAssertTrue(explanation.label.contains("push-enabled provisioning profile"))
+            XCTAssertTrue(explanation.label.contains("iPhone Settings cannot enable push"))
+        }
+        capture(app, named: "push-unavailable-build-or-backend-explanation")
+    }
+
+    @MainActor
+    func testSameOriginSubframeCannotPersistModelPreferences() throws {
+        let app = launch()
+        signIn(app, server: "http://localhost:43100")
+        let web = openSyntheticViewportFixture(in: app)
+        let showProbe = web.buttons["Show same-origin subframe probe"]
+        revealSyntheticControl(showProbe, in: web)
+        showProbe.tap()
+        let send = web.buttons["Post model preferences from same-origin subframe"]
+        XCTAssertTrue(send.waitForExistence(timeout: 10))
+        revealSyntheticControl(send, in: web)
+        send.tap()
+        XCTAssertTrue(web.staticTexts["Same-origin subframe posted model preferences"].waitForExistence(timeout: 5),
+                      "The real same-origin subframe must post a valid-shaped payload to the native handler")
+        let restored = restartIntoSyntheticModelPreferences(in: app)
+        try assertSyntheticPreferencesAreEmpty(in: restored)
+        restored.links["Return to authenticated web workspace fixture"].tap()
+        signOutFromWebFixture(in: app, web: authenticatedWebWorkspace(in: app))
+    }
+
+    @MainActor
     func testSavedWebSessionShowsNeutralLaunchUntilServerVerificationFinishes() async throws {
         try await resetFixtureSessionVerification()
         let app = launch()
@@ -384,6 +506,82 @@ final class MetisUITests: XCTestCase {
     }
 
     @MainActor
+    func testSyntheticSidebarPaintsFromWindowTopAndInsetsControlsBelowStatusBar() throws {
+        XCUIDevice.shared.orientation = .portrait
+        let app = launch()
+        signIn(app, server: "http://localhost:43100")
+        let web = openSyntheticViewportFixture(in: app)
+        web.buttons["Open sidebar"].tap()
+        XCTAssertTrue(web.buttons["Close sidebar"].waitForExistence(timeout: 5))
+        let metrics = try freshViewportMetrics(in: app, web: web, measureButton: "Measure sidebar geometry")
+        let geometry = try XCTUnwrap(observedWindowGeometry(in: app))
+        // WebKit's env() reports the OS safe area even when this runtime does
+        // not expose the status bar in the app's accessibility snapshot.
+        let safeContentTop = geometry.web.minY + CGFloat(metrics.safeAreaTop)
+        XCTAssertGreaterThan(metrics.safeAreaTop, 0)
+        if let nativeStatusBarBottom = geometry.statusBarBottom {
+            XCTAssertGreaterThanOrEqual(safeContentTop, nativeStatusBarBottom - 1)
+        }
+        XCTAssertEqual(geometry.window.minY, 0, accuracy: 1)
+        XCTAssertEqual(geometry.web.minY, geometry.window.minY, accuracy: 1)
+        XCTAssertEqual(geometry.web.minY + CGFloat(metrics.sidebarTop), geometry.window.minY, accuracy: 1,
+                       "The sidebar material must paint behind the status bar from the screen's top edge")
+        XCTAssertEqual(metrics.sidebarHeight, metrics.height, accuracy: 2)
+        XCTAssertEqual(metrics.shellHeight, metrics.height, accuracy: 2,
+                       "A safe top inset must not increase the root's border-box height")
+        XCTAssertGreaterThanOrEqual(CGFloat(metrics.sidebarBrandTop) + geometry.web.minY, safeContentTop - 1)
+        XCTAssertGreaterThanOrEqual(CGFloat(metrics.sidebarCloseTop) + geometry.web.minY, safeContentTop - 1)
+        XCTAssertGreaterThanOrEqual(web.links["Metis"].frame.minY, safeContentTop - 1)
+        XCTAssertGreaterThanOrEqual(web.buttons["Close sidebar"].frame.minY, safeContentTop - 1)
+        XCTAssertTrue(web.links["Metis"].isHittable)
+        XCTAssertTrue(web.buttons["Close sidebar"].isHittable)
+        capture(app, named: "synthetic-fixture-not-design-sidebar-full-height-safe-controls")
+    }
+
+    @MainActor
+    func testSyntheticKeyboardTransitionKeepsHeaderAndTranscriptSteady() throws {
+        XCUIDevice.shared.orientation = .portrait
+        let app = launch()
+        signIn(app, server: "http://localhost:43100")
+        let web = openSyntheticViewportFixture(in: app)
+        let headerControl = web.buttons["Open sidebar"]
+        let before = headerControl.frame
+        let composer = web.descendants(matching: .any)["Synthetic viewport draft"].firstMatch
+        composer.tap()
+        let inputVisible = XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in
+            guard let geometry = self.observedWindowGeometry(in: app) else { return false }
+            return geometry.availableBottom < geometry.window.maxY - 1
+        }, object: app)
+        XCTAssertEqual(XCTWaiter.wait(for: [inputVisible], timeout: 5), .completed,
+                       "A real onscreen input surface, including the system accessory, must resize the viewport")
+        let prefix = "Synthetic keyboard transition: "
+        let report = web.staticTexts.matching(NSPredicate(format: "label BEGINSWITH %@", prefix)).firstMatch
+        XCTAssertTrue(report.waitForExistence(timeout: 5))
+        let data = try XCTUnwrap(String(report.label.dropFirst(prefix.count)).data(using: .utf8))
+        let transition = try JSONDecoder().decode(SyntheticKeyboardTransition.self, from: data)
+        XCTAssertGreaterThanOrEqual(transition.frames, 12)
+        XCTAssertGreaterThanOrEqual(transition.duration, 700)
+        XCTAssertGreaterThan(transition.dockOffsetAttempts, 1,
+                             "The probe must repeatedly reproduce the web's transient keyboard-offset writes")
+        XCTAssertLessThanOrEqual(transition.headerTopRange, 2)
+        XCTAssertLessThanOrEqual(transition.headerBottomRange, 2)
+        XCTAssertLessThanOrEqual(transition.transcriptScrollRange, 2)
+        XCTAssertLessThanOrEqual(transition.documentScrollRange, 2)
+        XCTAssertLessThanOrEqual(transition.maxShellHeightError, 2)
+        XCTAssertEqual(headerControl.frame.minY, before.minY, accuracy: 2)
+        XCTAssertEqual(headerControl.frame.maxY, before.maxY, accuracy: 2)
+        let metrics = try freshViewportMetrics(in: app, web: web)
+        XCTAssertEqual(metrics.composerDockBottom, 0, accuracy: 1,
+                       "The native-sized viewport must not subtract a second web keyboard offset")
+        try assertSyntheticViewportGeometry(in: app, web: web)
+        capture(app, named: "synthetic-fixture-not-design-keyboard-transition-steady-header")
+        let attachment = XCTAttachment(string: report.label)
+        attachment.name = "synthetic-keyboard-transition-frame-ranges"
+        attachment.lifetime = .keepAlways
+        add(attachment)
+    }
+
+    @MainActor
     func testSyntheticViewportFixtureFillsWindowWithFocusedAndDismissedKeyboard() throws {
         XCUIDevice.shared.orientation = .portrait
         defer { XCUIDevice.shared.orientation = .portrait }
@@ -531,7 +729,9 @@ final class MetisUITests: XCTestCase {
         XCTAssertEqual(composer.value as? String, "Draft survives native controls and settings")
 
         web.buttons["Close sidebar"].tap()
-        web.buttons["Check viewport fixture session"].tap()
+        let checkSession = web.buttons["Check viewport fixture session"]
+        revealSyntheticControl(checkSession, in: web)
+        checkSession.tap()
         XCTAssertTrue(web.staticTexts["Authenticated viewport fixture session"].waitForExistence(timeout: 5))
         XCTAssertFalse(app.buttons["metis.signIn"].exists)
         XCUIDevice.shared.orientation = .landscapeLeft
@@ -595,12 +795,31 @@ final class MetisUITests: XCTestCase {
         XCTAssertTrue(web.staticTexts["Authenticated viewport fixture session"].exists)
     }
 
+    private struct SyntheticKeyboardTransition: Decodable {
+        let frames: Int
+        let duration: Double
+        let headerTopRange: Double
+        let headerBottomRange: Double
+        let transcriptScrollRange: Double
+        let documentScrollRange: Double
+        let maxShellHeightError: Double
+        let dockOffsetAttempts: Int
+    }
+
     private struct SyntheticViewportMetrics: Decodable {
         let revision: Int
         let measurementRevision: Int
         let width: Double
         let height: Double
         let safeAreaBottom: Double
+        let safeAreaTop: Double
+        let shellHeight: Double
+        let headerTop: Double
+        let sidebarTop: Double
+        let sidebarHeight: Double
+        let sidebarBrandTop: Double
+        let sidebarCloseTop: Double
+        let composerDockBottom: Double
         let composerBottom: Double
         let composerCenterX: Double
         let composerFontSize: Double
@@ -657,6 +876,66 @@ final class MetisUITests: XCTestCase {
         add(attachment)
     }
 
+    private struct SyntheticModelPreferenceValues: Decodable {
+        let model: String?
+        let parameters: String?
+        let unrelated: String?
+    }
+
+    private struct SyntheticModelPreferenceReport: Decodable {
+        let atScriptStart: SyntheticModelPreferenceValues
+        let current: SyntheticModelPreferenceValues
+    }
+
+    @MainActor
+    private func syntheticModelPreferences(in web: XCUIElement) throws -> SyntheticModelPreferenceReport {
+        let prefix = "Synthetic model preference storage: "
+        let report = web.staticTexts.matching(NSPredicate(format: "label BEGINSWITH %@", prefix)).firstMatch
+        XCTAssertTrue(report.waitForExistence(timeout: 5))
+        let data = try XCTUnwrap(String(report.label.dropFirst(prefix.count)).data(using: .utf8))
+        return try JSONDecoder().decode(SyntheticModelPreferenceReport.self, from: data)
+    }
+
+    @MainActor
+    private func openSyntheticModelPreferenceFixture(in app: XCUIApplication) -> XCUIElement {
+        let web = authenticatedWebWorkspace(in: app)
+        let open = web.links["Open synthetic model preference storage fixture"]
+        reveal(open, in: app)
+        open.tap()
+        XCTAssertTrue(web.staticTexts["SYNTHETIC model preference storage probe"].waitForExistence(timeout: 10))
+        return web
+    }
+
+    @MainActor
+    private func restartIntoSyntheticModelPreferences(in app: XCUIApplication) -> XCUIElement {
+        app.terminate()
+        app.launchArguments = ["-AppleLanguages", "(en)", "-AppleLocale", "en_US"]
+        app.launch()
+        return openSyntheticModelPreferenceFixture(in: app)
+    }
+
+    @MainActor
+    private func assertSyntheticPreferences(in web: XCUIElement, match written: SyntheticModelPreferenceValues) throws {
+        let restored = try syntheticModelPreferences(in: web)
+        XCTAssertEqual(restored.atScriptStart.model, written.model,
+                       "Native preference seeding must run before the page's first script")
+        XCTAssertEqual(restored.atScriptStart.parameters, written.parameters)
+        XCTAssertEqual(restored.current.model, written.model)
+        XCTAssertEqual(restored.current.parameters, written.parameters)
+        XCTAssertNil(restored.atScriptStart.unrelated)
+        XCTAssertNil(restored.current.unrelated, "Unsent drafts must not be copied into the session vault")
+    }
+
+    @MainActor
+    private func assertSyntheticPreferencesAreEmpty(in web: XCUIElement) throws {
+        let report = try syntheticModelPreferences(in: web)
+        for values in [report.atScriptStart, report.current] {
+            XCTAssertNil(values.model)
+            XCTAssertNil(values.parameters)
+            XCTAssertNil(values.unrelated)
+        }
+    }
+
     @MainActor
     private func openSyntheticViewportFixture(in app: XCUIApplication, contentEditableComposer: Bool = false) -> XCUIElement {
         let web = authenticatedWebWorkspace(in: app)
@@ -701,6 +980,7 @@ final class MetisUITests: XCTestCase {
         let window: CGRect
         let web: CGRect
         let keyboard: CGRect
+        let statusBarBottom: CGFloat?
         let availableBottom: CGFloat
     }
 
@@ -713,6 +993,7 @@ final class MetisUITests: XCTestCase {
         let windowFrame = window.frame
         var webFrame: CGRect?
         var keyboard = CGRect.zero
+        var statusBarBottom: CGFloat?
         var inputSurfaces: [CGRect] = []
         func labels(in node: XCUIElementSnapshot) -> Set<String> {
             node.children.reduce(into: Set([node.label])) { $0.formUnion(labels(in: $1)) }
@@ -720,6 +1001,9 @@ final class MetisUITests: XCTestCase {
         func visit(_ node: XCUIElementSnapshot, ancestors: [XCUIElementSnapshot]) {
             if node.elementType == .webView && node.identifier == "metis.webWorkspace" && webFrame == nil {
                 webFrame = node.frame
+            }
+            if node.elementType == .statusBar && !node.frame.isEmpty {
+                statusBarBottom = max(statusBarBottom ?? node.frame.maxY, node.frame.maxY)
             }
             if node.elementType == .keyboard {
                 let intersection = windowFrame.intersection(node.frame)
@@ -744,6 +1028,7 @@ final class MetisUITests: XCTestCase {
         visit(snapshot, ancestors: [])
         guard let webFrame else { return nil }
         return ObservedWindowGeometry(window: windowFrame, web: webFrame, keyboard: keyboard,
+                                      statusBarBottom: statusBarBottom,
                                       availableBottom: inputSurfaces.map(\.minY).min() ?? windowFrame.maxY)
     }
 
@@ -764,12 +1049,23 @@ final class MetisUITests: XCTestCase {
         XCTAssertEqual(settledResult, .completed,
                        "WebKit must meet the window bottom or actual system input surface", file: file, line: line)
         let geometry = try XCTUnwrap(measured)
+        XCTAssertEqual(geometry.web.minY, geometry.window.minY, accuracy: 1,
+                       "WebKit must paint from the real window top behind the status bar", file: file, line: line)
         XCTAssertEqual(geometry.web.maxY, geometry.availableBottom, accuracy: 2, file: file, line: line)
         XCTAssertFalse(app.buttons["metis.appMenu"].exists, "No permanent native App bar is present", file: file, line: line)
         XCTAssertFalse(app.buttons["metis.workspaceReload"].exists, file: file, line: line)
         let metrics = try freshViewportMetrics(in: app, web: web)
         let composer = web.descendants(matching: .any)["Synthetic viewport draft"].firstMatch
         let clearance = CGFloat(max(4, metrics.safeAreaBottom))
+        XCTAssertEqual(metrics.shellHeight, metrics.height, accuracy: 2,
+                       "Status-bar padding must stay inside the border-box root height", file: file, line: line)
+        XCTAssertEqual(metrics.headerTop, metrics.safeAreaTop, accuracy: 2,
+                       "In-flow header content must clear exactly one CSS status-bar inset", file: file, line: line)
+        if let nativeStatusBarBottom = geometry.statusBarBottom {
+            XCTAssertGreaterThanOrEqual(web.frame.minY + CGFloat(metrics.headerTop), nativeStatusBarBottom - 1,
+                                        "Header controls must clear the observed native status bar", file: file, line: line)
+        }
+        if metrics.focused { XCTAssertEqual(metrics.composerDockBottom, 0, accuracy: 1, file: file, line: line) }
         XCTAssertEqual(web.frame.height, CGFloat(metrics.height), accuracy: 2,
                        "The page viewport must use the full WebKit height", file: file, line: line)
         XCTAssertEqual(web.frame.width, CGFloat(metrics.width), accuracy: 2, file: file, line: line)
@@ -978,14 +1274,14 @@ final class MetisUITests: XCTestCase {
     }
 
     @MainActor
-    private func signIn(_ app: XCUIApplication, server: String) {
+    private func signIn(_ app: XCUIApplication, server: String, username fixtureUsername: String = "metis-apple-fixture-alice") {
         let address = app.textFields["metis.server"]
         XCTAssertTrue(address.waitForExistence(timeout: 8))
         address.tap()
         address.typeText(server)
         let username = app.textFields["metis.username"]
         username.tap()
-        username.typeText("metis-apple-fixture-alice")
+        username.typeText(fixtureUsername)
         let password = app.secureTextFields["metis.password"]
         password.tap()
         password.typeText("apple-fixture-only")

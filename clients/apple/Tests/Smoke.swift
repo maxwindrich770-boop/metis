@@ -53,6 +53,16 @@ struct Smoke {
         }
     }
 
+    private static func setFixtureControl(address: URL, state: String) async throws {
+        var components = URLComponents(url: address, resolvingAgainstBaseURL: false)!
+        components.path = "/fixture-control"
+        components.queryItems = [URLQueryItem(name: "state", value: state)]
+        var request = URLRequest(url: components.url!)
+        request.httpMethod = "POST"
+        let (_, response) = try await URLSession.shared.data(for: request)
+        try check((response as? HTTPURLResponse)?.statusCode == 204, "Fixture control acknowledgement")
+    }
+
     private static func run() async throws {
         try verifyEventFraming()
         let input = CommandLine.arguments.dropFirst().first ?? "http://localhost:43100"
@@ -83,6 +93,15 @@ struct Smoke {
         try check(aliceChats.map(\.title) == ["Fixture chat"], "Alice's chat list")
         try check(bobChats.map(\.title) == ["Other user's chat"], "Bob's chat list")
         try check(try await alice.profileName() == "metis-apple-fixture-alice", "Authenticated account profile")
+        try await setFixtureControl(address: address.url, state: "profile-fallback")
+        try check(try await alice.profileName() == "metis-apple-fixture-alice", "Canonical account profile fallback")
+        try await setFixtureControl(address: address.url, state: "profile-mobile")
+        try await setFixtureControl(address: address.url, state: "capabilities-unknown")
+        do {
+            _ = try await alice.pushSupported()
+            throw SmokeFailure(step: "An unknown push capability version was treated as known")
+        } catch MetisError.unexpectedResponse {}
+        try await setFixtureControl(address: address.url, state: "capabilities-current")
         try check(try await alice.chats() == aliceChats, "Second sign-in changed first client's session")
 
         try verifyWebCookieBoundary(client: alice)

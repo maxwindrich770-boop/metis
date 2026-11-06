@@ -277,18 +277,58 @@ enum MobilePushKind: String, CaseIterable, Identifiable {
     }
 }
 
+enum MobilePushAvailability {
+    // The isolated Personal Team project deliberately removes APNs entitlements.
+    // Absence of this marker makes no claim about the actual signed profile.
+    static var buildExplanation: String? {
+        guard Bundle.main.object(forInfoDictionaryKey: "MetisPushUnavailableReason") as? String == "personal-team" else { return nil }
+        return String(localized: "This iPhone test build has no Apple push entitlement. Push alerts require a build signed with a push-enabled provisioning profile. iPhone Settings cannot enable push for this build.")
+    }
+
+    static var missingBackendExplanation: String {
+        String(localized: "This Metis server does not yet provide the mobile push API. A server update is required before this app can enable push alerts.")
+    }
+
+    struct UnsupportedBuild: LocalizedError {
+        var errorDescription: String? { MobilePushAvailability.buildExplanation }
+    }
+}
+
 struct PushSettingsView: View {
     @Binding var events: Set<MobilePushKind>
     let enabled: Bool
     let busy: Bool
     let status: String?
+    var client: MetisAPI? = nil
     let change: () -> Void
     let save: () -> Void
     @Environment(\.dismiss) private var dismiss
+    @Environment(\.openURL) private var openURL
+    @Environment(\.scenePhase) private var scenePhase
+    @State private var explanation = MobilePushAvailability.buildExplanation
+    @State private var checking = true
+    @State private var canEnable = false
+    @State private var permissionDenied = false
+    @State private var canRetry = false
 
     var body: some View {
         NavigationStack {
             Form {
+                if checking && explanation == nil {
+                    ProgressView("Checking push availability…")
+                }
+                if let explanation {
+                    Section {
+                        MetisNotice(text: explanation, accessibilityID: "metis.pushAvailability")
+                        if permissionDenied {
+                            Button("Open iPhone Settings", action: openSettings)
+                        }
+                        if canRetry {
+                            Button("Try again") { Task { await loadAvailability() } }
+                                .disabled(checking || busy)
+                        }
+                    }
+                }
                 Section("Alert types") {
                     ForEach(MobilePushKind.allCases) { kind in
                         Toggle(kind.title, isOn: Binding(
@@ -297,16 +337,69 @@ struct PushSettingsView: View {
                         ))
                     }
                 }
-                if let status { Text(status).font(.footnote) }
+                .disabled(busy || (!enabled && !canEnable))
+                if let status { Text(LocalizedStringKey(status)).font(.footnote) }
+                if busy { ProgressView("Updating push registration…") }
                 if enabled {
-                    Button("Save alert filters", action: save)
+                    Button("Save alert filters", action: save).disabled(busy)
                 }
                 Button(enabled ? "Disable push alerts" : "Enable push alerts", action: change)
+                    .disabled(busy || (!enabled && (checking || !canEnable)))
+                    .accessibilityIdentifier("metis.changePush")
             }
-            .disabled(busy)
             .metisScreen()
             .navigationTitle("Push alerts")
             .toolbar { Button("Done") { dismiss() } }
+            .task { await loadAvailability() }
+            .onChange(of: scenePhase) { _, phase in
+                if phase == .active { Task { await loadAvailability() } }
+            }
+        }
+    }
+
+    private func openSettings() {
+        if let url = URL(string: UIApplication.openSettingsURLString) { openURL(url) }
+    }
+
+    @MainActor
+    private func loadAvailability() async {
+        checking = true
+        canEnable = false
+        canRetry = false
+        permissionDenied = false
+        defer { checking = false }
+        if let buildExplanation = MobilePushAvailability.buildExplanation {
+            explanation = buildExplanation
+            return
+        }
+        let settings = await UNUserNotificationCenter.current().notificationSettings()
+        guard !Task.isCancelled else { return }
+        if settings.authorizationStatus == .denied {
+            permissionDenied = true
+            explanation = String(localized: "Notifications are turned off for Metis in iPhone Settings. Allow notifications there, then return to enable push alerts.")
+            return
+        }
+        guard let client else {
+            explanation = String(localized: "Push support could not be checked. Check your connection and try again.")
+            canRetry = true
+            return
+        }
+        do {
+            let supported = try await client.pushSupported()
+            guard !Task.isCancelled else { return }
+            canEnable = supported
+            explanation = supported ? nil : String(localized: "Apple push delivery is not configured on this Metis server. The server operator must configure it before you can enable push alerts.")
+        } catch MetisError.http(404, _) {
+            explanation = MobilePushAvailability.missingBackendExplanation
+        } catch MetisError.unauthorized {
+            explanation = String(localized: "Your session is no longer valid. Sign in again.")
+        } catch MetisError.unexpectedResponse {
+            explanation = String(localized: "The server returned an unknown push capability response. Check that the app and server are up to date, then try again.")
+            canRetry = true
+        } catch {
+            guard !Task.isCancelled else { return }
+            explanation = String(localized: "Push support could not be checked. Check your connection and try again.")
+            canRetry = true
         }
     }
 }
@@ -345,6 +438,8 @@ struct ConnectionSettingsView: View {
     @State private var devices: [MetisRegisteredDevice] = []
     @State private var error: String?
     @State private var devicesLoaded = false
+    @State private var accountError: String?
+    @State private var devicesError: String?
     @State private var deleting: String?
 
     var body: some View {
@@ -359,9 +454,11 @@ struct ConnectionSettingsView: View {
                             .accessibilityValue(Text(verbatim: account))
                             .accessibilityIdentifier("metis.accountName")
                     }
+                    if let accountError { Text(accountError).font(.footnote) }
                     LabeledContent("Version", value: version)
                 }
                 Section("Push devices") {
+                    if let devicesError { Text(devicesError).font(.footnote) }
                     if devicesLoaded && devices.isEmpty { Text("No registered devices") }
                     ForEach(devices) { device in
                         VStack(alignment: .leading) {
@@ -378,7 +475,10 @@ struct ConnectionSettingsView: View {
                 Section("Privacy and permissions") {
                     Toggle("Allow Apple Watch access", isOn: $watchEnabled)
                     Button(action: showPush) {
-                        LabeledContent("Push alerts", value: pushEnabled ? "Enabled" : "Disabled")
+                        LabeledContent("Push alerts", value: pushStatus)
+                    }
+                    if let explanation = MobilePushAvailability.buildExplanation {
+                        Text(explanation).font(.footnote)
                     }
                     Button("Open iPhone Settings") {
                         if let url = URL(string: UIApplication.openSettingsURLString) { openURL(url) }
@@ -407,6 +507,10 @@ struct ConnectionSettingsView: View {
     }
 
     private var version: String { Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "—" }
+    private var pushStatus: String {
+        if MobilePushAvailability.buildExplanation != nil { return String(localized: "Requires a push-enabled build") }
+        return pushEnabled ? String(localized: "Enabled") : String(localized: "Disabled")
+    }
 
     private func isCurrent(_ device: MetisRegisteredDevice) -> Bool {
         device.id.caseInsensitiveCompare(installationID) == .orderedSame
@@ -415,12 +519,20 @@ struct ConnectionSettingsView: View {
     private func load() async {
         do {
             account = try await client.profileName()
+            accountError = nil
+        } catch MetisError.unauthorized { unauthorized(); return }
+        catch MetisError.http(404, _) {
+            accountError = String(localized: "This server does not provide account details to the app. Your account settings are available in the Metis workspace.")
+        } catch { if !Task.isCancelled { accountError = message(for: error) } }
+        guard !Task.isCancelled else { return }
+        do {
             devices = try await client.pushDevices()
             devicesLoaded = true
-            error = nil
+            devicesError = nil
         } catch MetisError.unauthorized { unauthorized() }
-        catch MetisError.http(404, _) { self.error = "This Metis server does not expose mobile device settings." }
-        catch { if !Task.isCancelled { self.error = message(for: error) } }
+        catch MetisError.http(404, _) {
+            devicesError = String(localized: "This Metis server does not yet support push device management.")
+        } catch { if !Task.isCancelled { devicesError = message(for: error) } }
     }
 
     private func remove(_ device: MetisRegisteredDevice) async {
@@ -502,6 +614,15 @@ enum MetisSessionVault {
         state.active?.pushEvents = pushEvents
         state.active?.watchEnabled = watchEnabled
         _ = save(state)
+    }
+
+    @discardableResult
+    static func setWebModelPreferences(_ preferences: [String: String], origin: String, cookie: String) -> Bool {
+        guard let checked = MetisWebPreferencePolicy.sanitized(preferences) else { return false }
+        var state = read()
+        guard state.active?.origin == origin, state.active?.cookie == cookie else { return false }
+        state.active?.webModelPreferences = checked
+        return save(state)
     }
 
     private static func enqueue(_ session: StoredMetisSession?, in state: inout State) {
@@ -636,6 +757,7 @@ final class MetisAppDelegate: NSObject, UIApplicationDelegate, UNUserNotificatio
     }
 
     func requestPush() async throws -> Bool {
+        guard MobilePushAvailability.buildExplanation == nil else { throw MobilePushAvailability.UnsupportedBuild() }
         let granted = try await UNUserNotificationCenter.current().requestAuthorization(options: [.alert, .badge, .sound])
         if granted {
             registrationFailed = false
@@ -645,17 +767,21 @@ final class MetisAppDelegate: NSObject, UIApplicationDelegate, UNUserNotificatio
     }
 
     func renewPush() async -> Bool {
+        guard MobilePushAvailability.buildExplanation == nil else { return false }
         let settings = await UNUserNotificationCenter.current().notificationSettings()
         guard [.authorized, .provisional, .ephemeral].contains(settings.authorizationStatus) else { return false }
+        registrationFailed = false
         UIApplication.shared.registerForRemoteNotifications()
         return true
     }
 
     func application(_ application: UIApplication, didRegisterForRemoteNotificationsWithDeviceToken deviceToken: Data) {
+        registrationFailed = false
         token = deviceToken.map { String(format: "%02x", $0) }.joined()
     }
 
     func application(_ application: UIApplication, didFailToRegisterForRemoteNotificationsWithError error: Error) {
+        token = nil
         registrationFailed = true
     }
 

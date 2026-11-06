@@ -206,7 +206,7 @@ private struct RootView: View {
                 catch { if !Task.isCancelled { notice = message(for: error) } }
             }
             .sheet(isPresented: $pushSettings) {
-                PushSettingsView(events: $pushEvents, enabled: pushRequested, busy: pushBusy, status: notice) {
+                PushSettingsView(events: $pushEvents, enabled: pushRequested, busy: pushBusy, status: notice, client: client) {
                     Task { await changePush(client) }
                 } save: {
                     if let token = push.token { Task { await registerPush(client, token: token) } }
@@ -536,7 +536,11 @@ private struct RootView: View {
             if stored.pushEvents != nil {
                 let renewed = await push.renewPush()
                 guard client === candidate else { return }
-                if renewed { pushRequested = true; pushRegistered = true }
+                if renewed {
+                    pushRequested = true
+                    pushRegistered = false
+                    notice = String(localized: "Waiting for Apple push registration…")
+                }
                 else {
                     try? await candidate.revokePush(installationID: installationID)
                     saveSessionPreferences()
@@ -577,6 +581,7 @@ private struct RootView: View {
         guard previous.cookie != updated.cookie || previous.expiresAt != updated.expiresAt else { return }
         updated.pushEvents = previous.pushEvents
         updated.watchEnabled = previous.watchEnabled
+        updated.webModelPreferences = previous.webModelPreferences
         // A revocation ticket belongs to one session, so rotation needs a new
         // ticket. Persist the cookie before attempting the optional mobile API.
         MetisSessionVault.replace(updated)
@@ -611,7 +616,7 @@ private struct RootView: View {
                                }, unauthorized: { expire(current) }, title: "iPhone settings",
                                close: { iPhoneSettings = false })
             .sheet(isPresented: $iPhonePushSettings) {
-                PushSettingsView(events: $pushEvents, enabled: pushRequested, busy: pushBusy, status: notice) {
+                PushSettingsView(events: $pushEvents, enabled: pushRequested, busy: pushBusy, status: notice, client: current) {
                     Task { await changePush(current) }
                 } save: {
                     if let token = push.token { Task { await registerPush(current, token: token) } }
@@ -761,17 +766,26 @@ private struct RootView: View {
                 saveSessionPreferences()
                 notice = "Push alerts disabled for this account."
             } else {
+                if let explanation = MobilePushAvailability.buildExplanation {
+                    notice = explanation
+                    return
+                }
                 guard try await current.pushSupported() else {
-                    notice = "Apple push notifications are unavailable on this server."
+                    notice = String(localized: "Apple push delivery is not configured on this Metis server. The server operator must configure it before you can enable push alerts.")
                     return
                 }
                 guard try await push.requestPush() else {
                     notice = "Allow notifications in iPhone Settings first."
                     return
                 }
-                if client === current { pushRequested = true }
+                if client === current {
+                    pushRequested = true
+                    pushRegistered = false
+                    notice = String(localized: "Waiting for Apple push registration…")
+                }
             }
         } catch MetisError.unauthorized { expire(current) }
+        catch MetisError.http(404, _) { notice = MobilePushAvailability.missingBackendExplanation }
         catch { notice = message(for: error) }
     }
 
@@ -780,11 +794,11 @@ private struct RootView: View {
         let registrationRevision = webSessionRevision
         pushBusy = true
         defer { pushBusy = false }
-        #if DEBUG
-        let environment = "sandbox"
-        #else
-        let environment = "production"
-        #endif
+        guard let environment = Bundle.main.object(forInfoDictionaryKey: "MetisAPNSEnvironment") as? String,
+              ["sandbox", "production"].contains(environment) else {
+            notice = String(localized: "This build does not declare a valid Apple push registration environment.")
+            return
+        }
         do {
             try await current.registerPush(installationID: installationID, token: token, topic: topic, environment: environment,
                                            events: pushEvents.map(\.rawValue).sorted())

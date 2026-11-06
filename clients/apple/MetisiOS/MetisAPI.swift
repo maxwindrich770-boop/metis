@@ -344,6 +344,7 @@ struct StoredMetisSession: Codable {
     var revocationTicket: String?
     var pushEvents: [String]?
     var watchEnabled: Bool?
+    var webModelPreferences: [String: String]?
 }
 
 struct PendingMetisLogout: Codable, Identifiable {
@@ -395,6 +396,10 @@ final class MetisAPI {
     private struct MobileCapabilities: Decodable { let version: Int; let apns: Bool }
     private struct DeviceList: Decodable { let devices: [MetisRegisteredDevice] }
     private struct Profile: Decodable { let username: String }
+    private struct AccountProfileEnvelope: Decodable {
+        struct AccountProfile: Decodable { let displayName: String }
+        let profile: AccountProfile
+    }
     private struct NotificationChat: Decodable { let chatId: String }
     private struct Inbox: Decodable { let notifications: [MetisNotification] }
     private struct ApprovalResponse: Decodable { let approval: MetisApproval? }
@@ -476,8 +481,18 @@ final class MetisAPI {
     var origin: String { address.url.absoluteString }
 
     func profileName() async throws -> String {
-        let profile: Profile = try await request(["mobile", "session"])
-        return profile.username
+        do {
+            let profile: Profile = try await request(["mobile", "session"])
+            return profile.username
+        } catch MetisError.http(404, _) {
+            // The canonical Web account API also serves servers without the
+            // optional native mobile endpoints. Never fabricate an account name.
+            let result: AccountProfileEnvelope = try await request(["profile"])
+            guard !result.profile.displayName.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+                throw MetisError.unexpectedResponse
+            }
+            return result.profile.displayName
+        }
     }
 
     func pushDevices() async throws -> [MetisRegisteredDevice] {
@@ -526,7 +541,8 @@ final class MetisAPI {
 
     func pushSupported() async throws -> Bool {
         let result: MobileCapabilities = try await request(["mobile", "capabilities"])
-        return result.version == 1 && result.apns
+        guard result.version == 1 else { throw MetisError.unexpectedResponse }
+        return result.apns
     }
 
     func registerPush(installationID: String, token: String, topic: String, environment: String, events: [String]) async throws {

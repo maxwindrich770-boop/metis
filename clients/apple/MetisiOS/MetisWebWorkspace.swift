@@ -61,6 +61,34 @@ enum MetisWebPolicy {
     }
 }
 
+/// Only the Web UI's model-selection storage family crosses a restart.
+/// This is an opaque persistence contract, never a model/capability registry.
+enum MetisWebPreferencePolicy {
+    static let maximumEntries = 16
+    static let maximumBytes = 65_536
+
+    static func isSupportedKey(_ key: String) -> Bool {
+        ["_model", "_model_params"].contains { key.hasSuffix($0) && key.count > $0.count }
+    }
+
+    static func sanitized(_ values: [String: String]) -> [String: String]? {
+        guard values.count <= maximumEntries,
+              let data = try? JSONEncoder().encode(values), data.count <= maximumBytes else { return nil }
+        for (key, value) in values {
+            guard isSupportedKey(key) else { return nil }
+            if key.hasSuffix("_model_params") {
+                guard let data = value.data(using: .utf8),
+                      let entries = (try? JSONSerialization.jsonObject(with: data)) as? [[String: Any]],
+                      entries.allSatisfy({ entry in
+                          Set(entry.keys) == Set(["id", "value"])
+                              && entry["id"] is String && entry["value"] is String
+                      }) else { return nil }
+            }
+        }
+        return values
+    }
+}
+
 #if canImport(WebKit) && canImport(UIKit)
 import Combine
 import UIKit
@@ -78,7 +106,13 @@ private final class MetisAppControlsBridge: NSObject, WKScriptMessageHandler {
     weak var owner: MetisWebWorkspace?
 
     func userContentController(_ userContentController: WKUserContentController, didReceive message: WKScriptMessage) {
-        Task { @MainActor [weak self] in self?.owner?.receiveAppControls(message) }
+        Task { @MainActor [weak self] in
+            if message.name == "metisModelPreferences" {
+                self?.owner?.receiveModelPreferences(message)
+            } else {
+                self?.owner?.receiveAppControls(message)
+            }
+        }
     }
 }
 
@@ -116,6 +150,7 @@ final class MetisWebWorkspace: NSObject, ObservableObject {
     private var ownedFiles: [URL: URL] = [:]
     private var lastSessionCookie: HTTPCookie?
     private var lastMainURL: URL?
+    private var webModelPreferences: [String: String]?
     private var pendingChatURL: URL?
     private var cookieTask: Task<Void, Never>?
     private var authorizationTask: Task<Void, Never>?
@@ -154,6 +189,7 @@ final class MetisWebWorkspace: NSObject, ObservableObject {
         webView.scrollView.scrollIndicatorInsets = .zero
         webView.scrollView.automaticallyAdjustsScrollIndicatorInsets = false
         installAppPresentation()
+        installModelPreferences()
         cookieObserver.owner = self
         configuration.websiteDataStore.httpCookieStore.add(cookieObserver)
         observations = [
@@ -206,6 +242,100 @@ final class MetisWebWorkspace: NSObject, ObservableObject {
         appControlsBridge.owner = self
         controller.add(appControlsBridge, name: "metisAppControls")
         controller.addUserScript(WKUserScript(source: source, injectionTime: .atDocumentEnd, forMainFrameOnly: true))
+    }
+
+    private static let preferenceScriptMarker = "/* Metis model preference bridge */"
+
+    private func installModelPreferences() {
+        if let active = MetisSessionVault.active, active.origin == client.origin,
+           active.cookie == client.sessionRecord()?.cookie {
+            webModelPreferences = MetisWebPreferencePolicy.sanitized(active.webModelPreferences ?? [:])
+        }
+        webView.configuration.userContentController.add(appControlsBridge, name: "metisModelPreferences")
+        refreshPreferenceScript()
+    }
+
+    private func refreshPreferenceScript() {
+        guard !invalidated,
+              let originData = try? JSONEncoder().encode(client.origin),
+              let originLiteral = String(data: originData, encoding: .utf8),
+              let data = try? JSONEncoder().encode(webModelPreferences ?? [:]),
+              let literal = String(data: data, encoding: .utf8) else { return }
+        // Only model preference strings enter this script, never the session,
+        // cookies, credentials, chat contents or arbitrary localStorage values.
+        let source = Self.preferenceScriptMarker + """
+
+        (() => {
+          if (window.top !== window || location.origin !== new URL(\(originLiteral)).origin) return;
+          const handler = window.webkit?.messageHandlers?.metisModelPreferences;
+          if (!handler) return;
+          const supported = key => typeof key === 'string' &&
+            ['_model', '_model_params'].some(suffix => key.endsWith(suffix) && key.length > suffix.length);
+          try {
+            const storage = window.localStorage;
+            const nativeSet = Storage.prototype.setItem;
+            const nativeRemove = Storage.prototype.removeItem;
+            const nativeClear = Storage.prototype.clear;
+            const seed = \(literal);
+            for (const [key, value] of Object.entries(seed)) {
+              if (supported(key) && storage.getItem(key) === null) nativeSet.call(storage, key, value);
+            }
+            let scheduled = false;
+            const changed = () => {
+              if (scheduled) return;
+              scheduled = true;
+              queueMicrotask(() => {
+                scheduled = false;
+                const values = {};
+                for (let index = 0; index < storage.length; index++) {
+                  const key = storage.key(index);
+                  if (supported(key)) values[key] = storage.getItem(key);
+                }
+                handler.postMessage(values);
+              });
+            };
+            Storage.prototype.setItem = function(key, value) {
+              nativeSet.apply(this, arguments);
+              if (this === storage && supported(String(key))) changed();
+            };
+            Storage.prototype.removeItem = function(key) {
+              nativeRemove.apply(this, arguments);
+              if (this === storage && supported(String(key))) changed();
+            };
+            Storage.prototype.clear = function() {
+              nativeClear.apply(this, arguments);
+              if (this === storage) changed();
+            };
+          } catch {
+            // A server that disables Web storage keeps its normal unavailable state.
+          }
+        })();
+        """
+        let controller = webView.configuration.userContentController
+        let otherScripts = controller.userScripts.filter { !$0.source.hasPrefix(Self.preferenceScriptMarker) }
+        controller.removeAllUserScripts()
+        otherScripts.forEach(controller.addUserScript)
+        controller.addUserScript(WKUserScript(source: source, injectionTime: .atDocumentStart, forMainFrameOnly: true))
+    }
+
+    fileprivate func receiveModelPreferences(_ message: WKScriptMessage) {
+        guard !invalidated, started, !authorizationLost,
+              message.name == "metisModelPreferences", message.webView === webView,
+              message.frameInfo.isMainFrame, trusted(message.frameInfo.securityOrigin),
+              let server, let url = message.frameInfo.request.url,
+              MetisWebPolicy.isSameOrigin(url, server: server),
+              let raw = message.body as? [String: String],
+              let checked = MetisWebPreferencePolicy.sanitized(raw) else { return }
+        webModelPreferences = checked
+        persistModelPreferences()
+        // Updated scripts seed the next document only. In particular, a clear()
+        // or removeItem() followed by reload must not revive the original seed.
+        refreshPreferenceScript()
+    }
+
+    private func persistModelPreferences() {
+        guard let preferences = webModelPreferences, let record = client.sessionRecord() else { return }
+        MetisSessionVault.setWebModelPreferences(preferences, origin: record.origin, cookie: record.cookie)
     }
 
     fileprivate func receiveAppControls(_ message: WKScriptMessage) {
@@ -318,6 +448,8 @@ final class MetisWebWorkspace: NSObject, ObservableObject {
         appControlsAvailable = false
         appControlsRequested = false
         webView.configuration.userContentController.removeScriptMessageHandler(forName: "metisAppControls")
+        webView.configuration.userContentController.removeScriptMessageHandler(forName: "metisModelPreferences")
+        webModelPreferences = nil
         webView.configuration.userContentController.removeAllUserScripts()
         let store = webView.configuration.websiteDataStore
         store.httpCookieStore.remove(cookieObserver)
@@ -391,6 +523,7 @@ final class MetisWebWorkspace: NSObject, ObservableObject {
             lastSessionCookie = cookie
             sessionRevision += 1
             sessionChanged()
+            persistModelPreferences()
             return true
         } catch {
             loseAuthorization()
