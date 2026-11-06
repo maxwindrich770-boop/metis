@@ -11,7 +11,7 @@ final class MetisUITests: XCTestCase {
 
     @MainActor
     func testLoginAndStreamFromFixture() async throws {
-        let app = launch()
+        let app = launch(nativeInterface: true)
         capture(app, named: "01-login-light")
         signIn(app, server: "http://localhost:43100")
         let chat = app.buttons["Fixture chat"]
@@ -45,9 +45,17 @@ final class MetisUITests: XCTestCase {
         let transcript = app.collectionViews.firstMatch
         let earlier = app.buttons["Load earlier messages"]
         scrollToEarlier(earlier, in: transcript)
+        let firstEarlierReady = XCTNSPredicateExpectation(
+            predicate: NSPredicate(format: "enabled == true AND hittable == true"), object: earlier)
+        let firstEarlierResult = await XCTWaiter.fulfillment(of: [firstEarlierReady], timeout: 15)
+        XCTAssertEqual(firstEarlierResult, .completed, app.debugDescription)
         earlier.tap()
         scrollToEarlier(app.staticTexts["Nachricht 17 🌱"], in: transcript)
         scrollToEarlier(earlier, in: transcript)
+        let secondEarlierReady = XCTNSPredicateExpectation(
+            predicate: NSPredicate(format: "enabled == true AND hittable == true"), object: earlier)
+        let secondEarlierResult = await XCTWaiter.fulfillment(of: [secondEarlierReady], timeout: 15)
+        XCTAssertEqual(secondEarlierResult, .completed, app.debugDescription)
         earlier.tap()
         let firstMessage = app.staticTexts["Nachricht 1 🌱"]
         scrollToEarlier(firstMessage, in: transcript)
@@ -79,7 +87,7 @@ final class MetisUITests: XCTestCase {
         capture(app, named: "03-conversation-and-composer")
         scrollToEarlier(firstMessage, in: transcript)
         app.terminate()
-        app.launchArguments = ["-AppleLanguages", "(en)", "-AppleLocale", "en_US"]
+        app.launchArguments = ["-AppleLanguages", "(en)", "-AppleLocale", "en_US", "-metis.native-interface"]
         app.launch()
         XCTAssertTrue(app.staticTexts["Fixture chat"].waitForExistence(timeout: 15))
         app.tabBars.buttons["Activity"].tap()
@@ -172,7 +180,7 @@ final class MetisUITests: XCTestCase {
 
     @MainActor
     func testWatchAccessOptInSurvivesRestart() {
-        let app = launch()
+        let app = launch(nativeInterface: true)
         signIn(app, server: "http://localhost:43100")
         XCTAssertTrue(app.buttons["Fixture chat"].waitForExistence(timeout: 15))
         app.tabBars.buttons["Settings"].tap()
@@ -186,7 +194,7 @@ final class MetisUITests: XCTestCase {
         XCTAssertEqual(XCTWaiter.wait(for: [enabled], timeout: 5), .completed, app.debugDescription)
         capture(app, named: "07b-watch-access-enabled")
         app.terminate()
-        app.launchArguments = ["-AppleLanguages", "(en)", "-AppleLocale", "en_US"]
+        app.launchArguments = ["-AppleLanguages", "(en)", "-AppleLocale", "en_US", "-metis.native-interface"]
         app.launch()
         XCTAssertTrue(app.staticTexts["Fixture chat"].waitForExistence(timeout: 15))
         app.tabBars.buttons["Settings"].tap()
@@ -194,6 +202,154 @@ final class MetisUITests: XCTestCase {
         reveal(watchAccess, in: app)
         XCTAssertEqual(watchAccess.value as? String, "1")
         capture(app, named: "07-watch-access-opt-in-restored")
+    }
+
+    @MainActor
+    func testAuthenticatedWebWorkspacePersistsChangesAndLogsOut() {
+        let app = launch()
+        signIn(app, server: "http://localhost:43100")
+        let web = authenticatedWebWorkspace(in: app)
+        XCTAssertTrue(app.buttons["metis.appMenu"].exists)
+        web.buttons["Save a chat from the web fixture"].tap()
+        let savedChat = web.staticTexts.matching(NSPredicate(format: "label CONTAINS %@", "Saved from web fixture")).firstMatch
+        XCTAssertTrue(savedChat.waitForExistence(timeout: 10), app.debugDescription)
+
+        app.terminate()
+        app.launchArguments = ["-AppleLanguages", "(en)", "-AppleLocale", "en_US"]
+        app.launch()
+        let restoredWeb = authenticatedWebWorkspace(in: app)
+        XCTAssertTrue(restoredWeb.staticTexts.matching(NSPredicate(format: "label CONTAINS %@", "Saved from web fixture"))
+            .firstMatch.waitForExistence(timeout: 10),
+                      "A real cookie-protected web action must survive a full app restart")
+        signOutFromWebFixture(in: app, web: restoredWeb)
+
+        app.terminate()
+        app.launch()
+        XCTAssertTrue(app.buttons["metis.signIn"].waitForExistence(timeout: 8))
+        XCTAssertFalse(app.buttons["Retry saved session"].exists)
+        XCTAssertFalse(app.webViews["metis.webWorkspace"].exists)
+    }
+
+    @MainActor
+    func testWebSessionRotationSurvivesRestart() {
+        let app = launch()
+        signIn(app, server: "http://localhost:43100")
+        let web = authenticatedWebWorkspace(in: app)
+        let rotate = web.buttons["Rotate the web session"]
+        reveal(rotate, in: app)
+        rotate.tap()
+        XCTAssertTrue(web.staticTexts["Session rotated in web fixture"].waitForExistence(timeout: 15),
+                      "The real auth route must replace the HttpOnly cookie and revoke the original session")
+
+        // Re-entering the foreground also checks the native client's adopted
+        // cookie before terminating; the old cookie is already invalid.
+        XCUIDevice.shared.press(.home)
+        app.activate()
+        XCTAssertTrue(web.staticTexts["HttpOnly cookie verified"].waitForExistence(timeout: 10))
+        app.terminate()
+        app.launchArguments = ["-AppleLanguages", "(en)", "-AppleLocale", "en_US"]
+        app.launch()
+        let restoredWeb = authenticatedWebWorkspace(in: app)
+        XCTAssertFalse(app.buttons["Retry saved session"].exists)
+        signOutFromWebFixture(in: app, web: restoredWeb)
+    }
+
+    @MainActor
+    func testWebDownloadAndExternalWindowKeepTheAuthenticatedWorkspace() {
+        let app = launch()
+        signIn(app, server: "http://localhost:43100")
+        let web = authenticatedWebWorkspace(in: app)
+        let download = web.links["Download the public web fixture"]
+        reveal(download, in: app)
+        download.tap()
+        let share = app.descendants(matching: .any)["ActivityListView"].firstMatch
+        XCTAssertTrue(share.waitForExistence(timeout: 15), app.debugDescription)
+        let filename = app.descendants(matching: .any)
+            .matching(NSPredicate(format: "label CONTAINS %@", "metis-web-fixture")).firstMatch
+        XCTAssertTrue(filename.waitForExistence(timeout: 8),
+                      "The native share controller must receive the downloaded public fixture file")
+        let closeShare = app.buttons["Close"].firstMatch
+        XCTAssertTrue(closeShare.waitForExistence(timeout: 5), app.debugDescription)
+        closeShare.tap()
+        let shareClosed = XCTNSPredicateExpectation(predicate: NSPredicate(format: "exists == false"), object: share)
+        XCTAssertEqual(XCTWaiter.wait(for: [shareClosed], timeout: 8), .completed)
+
+        let external = web.links["Open the external fixture in a new window"]
+        reveal(external, in: app)
+        external.tap()
+        let closeBrowser = app.buttons.matching(NSPredicate(format: "label == %@ OR label == %@", "Done", "Close")).firstMatch
+        XCTAssertTrue(closeBrowser.waitForExistence(timeout: 15), app.debugDescription)
+        XCTAssertTrue(app.staticTexts["External fixture opened without a Metis cookie"]
+            .waitForExistence(timeout: 15),
+                      "A user-activated target=_blank link must open externally without the Metis cookie")
+        closeBrowser.tap()
+        let browserClosed = XCTNSPredicateExpectation(predicate: NSPredicate(format: "exists == false"), object: closeBrowser)
+        XCTAssertEqual(XCTWaiter.wait(for: [browserClosed], timeout: 8), .completed)
+        XCTAssertTrue(web.waitForExistence(timeout: 5))
+        XCTAssertTrue(web.staticTexts["HttpOnly cookie verified"].exists)
+        signOutFromWebFixture(in: app, web: web)
+    }
+
+    @MainActor
+    func testScriptedWebSetupWindowRequiresNativeConfirmation() {
+        let app = launch()
+        signIn(app, server: "http://localhost:43100")
+        let web = authenticatedWebWorkspace(in: app)
+        let getAPIKey = web.buttons["Get an API key from the web fixture"]
+        reveal(getAPIKey, in: app)
+        getAPIKey.tap()
+        let openInBrowser = app.buttons["Open in browser"].firstMatch
+        let cancel = app.buttons["Cancel"].firstMatch
+        XCTAssertTrue(openInBrowser.waitForExistence(timeout: 10), app.debugDescription)
+        XCTAssertTrue(cancel.exists)
+        XCTAssertFalse(app.buttons.matching(NSPredicate(format: "label == %@ OR label == %@", "Done", "Close")).firstMatch.exists,
+                       "A scripted setup popup must wait for native confirmation")
+        cancel.tap()
+        let cancelled = XCTNSPredicateExpectation(predicate: NSPredicate(format: "exists == false"), object: openInBrowser)
+        XCTAssertEqual(XCTWaiter.wait(for: [cancelled], timeout: 8), .completed)
+        XCTAssertTrue(web.exists)
+        XCTAssertFalse(app.staticTexts["External fixture opened without a Metis cookie"].exists)
+
+        getAPIKey.tap()
+        XCTAssertTrue(openInBrowser.waitForExistence(timeout: 10), app.debugDescription)
+        openInBrowser.tap()
+        let closeBrowser = app.buttons.matching(NSPredicate(format: "label == %@ OR label == %@", "Done", "Close")).firstMatch
+        XCTAssertTrue(closeBrowser.waitForExistence(timeout: 15), app.debugDescription)
+        XCTAssertTrue(app.staticTexts["External fixture opened without a Metis cookie"]
+            .waitForExistence(timeout: 15),
+                      "Approving the setup popup must open the provider page without the Metis cookie")
+        closeBrowser.tap()
+        let browserClosed = XCTNSPredicateExpectation(predicate: NSPredicate(format: "exists == false"), object: closeBrowser)
+        XCTAssertEqual(XCTWaiter.wait(for: [browserClosed], timeout: 8), .completed)
+        XCTAssertTrue(web.waitForExistence(timeout: 5))
+        signOutFromWebFixture(in: app, web: web)
+    }
+
+    @MainActor
+    private func authenticatedWebWorkspace(in app: XCUIApplication) -> XCUIElement {
+        let web = app.webViews["metis.webWorkspace"].firstMatch
+        XCTAssertTrue(web.waitForExistence(timeout: 15), app.debugDescription)
+        let skipPasswordSave = app.sheets["Save Password?"].buttons["Not Now"]
+        for _ in 0..<3 {
+            guard skipPasswordSave.waitForExistence(timeout: 1) else { break }
+            skipPasswordSave.tap()
+        }
+        XCTAssertTrue(web.staticTexts["Authenticated web workspace fixture"].waitForExistence(timeout: 15),
+                      "The fixture only serves this page after validating the real session cookie")
+        XCTAssertTrue(web.staticTexts["HttpOnly cookie verified"].waitForExistence(timeout: 10),
+                      "The web page must authenticate API requests without a script-readable session cookie")
+        return web
+    }
+
+    @MainActor
+    private func signOutFromWebFixture(in app: XCUIApplication, web: XCUIElement) {
+        let logout = web.buttons["Sign out from the web fixture"]
+        reveal(logout, in: app)
+        logout.tap()
+        XCTAssertTrue(app.buttons["metis.signIn"].waitForExistence(timeout: 15),
+                      "Deleting the web cookie must return to the existing native sign-in screen")
+        XCTAssertTrue(app.textFields["metis.server"].exists)
+        XCTAssertFalse(app.webViews["metis.webWorkspace"].exists)
     }
 
     private func setFixtureSessionState(_ state: String) async throws {
@@ -222,10 +378,11 @@ final class MetisUITests: XCTestCase {
     }
 
     @MainActor
-    private func launch() -> XCUIApplication {
+    private func launch(nativeInterface: Bool = false) -> XCUIApplication {
         continueAfterFailure = false
         let app = XCUIApplication()
         app.launchArguments = ["-AppleLanguages", "(en)", "-AppleLocale", "en_US", "-metisServer", ""]
+        if nativeInterface { app.launchArguments.append("-metis.native-interface") }
         app.launch()
         return app
     }

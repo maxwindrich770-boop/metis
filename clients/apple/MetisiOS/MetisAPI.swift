@@ -437,6 +437,25 @@ final class MetisAPI {
         session.invalidateAndCancel()
     }
 
+    // Share only the validated first-party session, never page scripts or URLs.
+    func webSessionCookie() -> HTTPCookie? {
+        session.configuration.httpCookieStorage?.cookies(for: address.url)?.first(where: validWebSessionCookie)
+    }
+
+    func updateWebSessionCookie(_ cookie: HTTPCookie) throws {
+        guard validWebSessionCookie(cookie) else { throw MetisError.unauthorized }
+        session.configuration.httpCookieStorage?.setCookie(cookie)
+    }
+
+    private func validWebSessionCookie(_ cookie: HTTPCookie) -> Bool {
+        let domain = cookie.domain
+        guard let host = address.url.host, domain.caseInsensitiveCompare(host) == .orderedSame,
+              cookie.name == "ai_chat_auth", cookie.path == "/", cookie.isHTTPOnly,
+              !cookie.value.isEmpty, let expires = cookie.expiresDate, expires > Date(),
+              address.url.scheme != "https" || cookie.isSecure else { return false }
+        return true
+    }
+
     func sessionRecord() -> StoredMetisSession? {
         guard let cookie = session.configuration.httpCookieStorage?.cookies(for: address.url)?.first(where: {
             $0.name == "ai_chat_auth" && $0.path == "/" && (address.url.scheme != "https" || $0.isSecure)

@@ -8,6 +8,106 @@ import path from "node:path";
 import { Readable } from "node:stream";
 import { pipeline } from "node:stream/promises";
 
+// Synthetic authenticated page for integration tests only. It intentionally uses
+// the public fixture account and the real cookie-protected auth/chat handlers.
+function webWorkspaceFixture(username: string, cookieName: string, externalAddress: string) {
+  const scriptValue = (value: string) => JSON.stringify(value).replaceAll("<", "\\u003c");
+  return `<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Metis WebKit integration fixture</title>
+  <style>
+    body { font: 17px system-ui; margin: 20px; }
+    button, a { display: block; min-height: 44px; margin: 12px 0; }
+  </style>
+</head>
+<body>
+  <main>
+    <p>Synthetic integration fixture; not the Metis web design.</p>
+    <h1>Authenticated web workspace fixture</h1>
+    <p id="account"></p>
+    <p id="cookie-state" role="status">Checking the web session…</p>
+    <button id="save-chat">Save a chat from the web fixture</button>
+    <h2>Saved chats</h2>
+    <ul id="saved-chats"></ul>
+    <button id="rotate-session">Rotate the web session</button>
+    <p id="rotation-state" role="status"></p>
+    <a href="/fixture-web/download" download="metis-web-fixture.txt">Download the public web fixture</a>
+    <a href="${externalAddress}" target="_blank" rel="noopener">Open the external fixture in a new window</a>
+    <button id="scripted-external">Get an API key from the web fixture</button>
+    <button id="logout">Sign out from the web fixture</button>
+    <p id="error" role="alert"></p>
+  </main>
+  <script>
+    const expectedUsername = ${scriptValue(username)};
+    const cookieName = ${scriptValue(cookieName)};
+    const savedTitle = "Saved from web fixture";
+    const element = id => document.getElementById(id);
+    element("account").textContent = expectedUsername;
+    const fail = error => { element("error").textContent = String(error.message || error); };
+    async function request(url, options) {
+      const response = await fetch(url, { credentials: "same-origin", ...options });
+      if (!response.ok) throw new Error("Fixture request failed: " + response.status);
+      return response;
+    }
+    async function verifyCookie() {
+      const account = await (await request("/api/mobile/session")).json();
+      if (account.username !== expectedUsername) throw new Error("Unexpected web session owner");
+      const visibleCookie = document.cookie.split(";").some(part => part.trim().startsWith(cookieName + "="));
+      if (visibleCookie) throw new Error("Session cookie must remain HttpOnly");
+      element("cookie-state").textContent = "HttpOnly cookie verified";
+    }
+    async function loadChats() {
+      const result = await (await request("/api/chats")).json();
+      element("saved-chats").replaceChildren();
+      for (const chat of result.chats.filter(chat => chat.title === savedTitle)) {
+        const item = document.createElement("li");
+        item.textContent = chat.title;
+        element("saved-chats").append(item);
+      }
+    }
+    element("save-chat").addEventListener("click", async () => {
+      try {
+        await request("/api/chats", {
+          method: "POST", headers: { "content-type": "application/json" },
+          body: JSON.stringify({ title: savedTitle }),
+        });
+        await loadChats();
+      } catch (error) { fail(error); }
+    });
+    element("rotate-session").addEventListener("click", async () => {
+      try {
+        // Public synthetic fixture credentials. The real auth handler revokes the
+        // old cookie and issues a new HttpOnly cookie; JavaScript never sees it.
+        await request("/api/auth", {
+          method: "POST", headers: { "content-type": "application/json" },
+          body: JSON.stringify({ username: "metis-apple-fixture-alice", password: "apple-fixture-only" }),
+        });
+        window.location.assign("/?session=rotated");
+      } catch (error) { fail(error); }
+    });
+    element("scripted-external").addEventListener("click", () => {
+      // Mirrors setup buttons that open a provider page with window.open.
+      window.open(${scriptValue(externalAddress)}, "_blank", "noopener,noreferrer");
+    });
+    element("logout").addEventListener("click", async () => {
+      try {
+        await request("/api/auth", { method: "DELETE" });
+        window.location.reload();
+      } catch (error) { fail(error); }
+    });
+    Promise.all([verifyCookie(), loadChats()]).then(() => {
+      if (new URL(window.location.href).searchParams.get("session") === "rotated") {
+        element("rotation-state").textContent = "Session rotated in web fixture";
+      }
+    }).catch(fail);
+  </script>
+</body>
+</html>`;
+}
+
 async function main() {
   const root = mkdtempSync(path.join(tmpdir(), "metis-apple-fixture-"));
   const workspace = path.join(root, "model-workspace");
@@ -26,7 +126,7 @@ async function main() {
     MCP_PUBLIC_URL: `http://127.0.0.1:${port}`, MCP_BEARER_TOKEN: "",
     AI_CHAT_INTERNAL_MCP_SERVER: path.resolve("lib/internal-mcp-server.mjs"),
   });
-  const { createUser } = await import("../../../lib/auth");
+  const { createUser, getAuthenticatedCookieUser, CHAT_COOKIE } = await import("../../../lib/auth");
   const { createChat, appendMessage } = await import("../../../lib/db-store");
   const { getDatabase } = await import("../../../lib/sqlite");
   const auth = await import("../../../app/api/auth/route");
@@ -127,7 +227,39 @@ async function main() {
       const upload = /^\/api\/file-uploads\/([^/]+)$/.exec(url.pathname);
       const download = /^\/api\/uploads\/([^/]+)\/([^/]+)$/.exec(url.pathname);
       let response: Response;
-      if (url.pathname === "/api/auth" && method === "POST") {
+      // This deliberately small synthetic HTML page tests the native WebKit/session
+      // boundary. It is not the Metis web UI and is not design/screenshot evidence.
+      if (url.pathname === "/" && method === "GET") {
+        const account = getAuthenticatedCookieUser(request);
+        const externalAddress = url.origin.replace("localhost", "127.0.0.1") + "/fixture-external";
+        response = account ? new Response(webWorkspaceFixture(account.username, CHAT_COOKIE, externalAddress), {
+          headers: { "content-type": "text/html; charset=utf-8", "cache-control": "private, no-store" },
+        }) : new Response("The synthetic web fixture requires an authenticated cookie.", {
+          status: 401, headers: { "content-type": "text/plain; charset=utf-8", "cache-control": "no-store" },
+        });
+      }
+      else if (url.pathname === "/fixture-web/download" && method === "GET") {
+        response = getAuthenticatedCookieUser(request) ? new Response("Metis public WebKit download fixture.\n", {
+          headers: {
+            "content-type": "text/plain; charset=utf-8",
+            "content-disposition": 'attachment; filename="metis-web-fixture.txt"',
+            "cache-control": "private, no-store",
+          },
+        }) : new Response(null, { status: 401 });
+      }
+      else if (url.pathname === "/fixture-external" && method === "GET") {
+        const receivedMetisCookie = request.headers.get("cookie")?.split(";")
+          .some(part => part.trim().startsWith(CHAT_COOKIE + "="));
+        // Do not echo any cookie values. The positive marker requires that the
+        // authenticated WebKit cookie has not crossed into the external browser.
+        const message = receivedMetisCookie ? "External fixture received a Metis cookie"
+          : "External fixture opened without a Metis cookie";
+        response = new Response(`<!doctype html><html lang="en"><head><meta name="viewport" content="width=device-width, initial-scale=1"><title>External browser fixture</title></head><body><h1>${message}</h1></body></html>`, {
+          status: receivedMetisCookie ? 403 : 200,
+          headers: { "content-type": "text/html; charset=utf-8", "cache-control": "no-store" },
+        });
+      }
+      else if (url.pathname === "/api/auth" && method === "POST") {
         const credentials = await request.clone().json().catch(() => null);
         if (credentials?.username === "metis-apple-fixture-redirect") {
           response = new Response(null, { status: 307, headers: { Location: "/fixture-redirect-target" } });
@@ -188,7 +320,10 @@ async function main() {
       else if (url.pathname === "/api/runs" && method === "GET") response = await runs.GET(request);
       else response = new Response(null, { status: 404 });
       if (process.env.METIS_FIXTURE_LOG_REQUESTS === "1" || response.status >= 500) {
-        console.warn(`Fixture ${method} ${url.pathname} returned ${response.status}`);
+        const cursor = match && method === "GET"
+          ? " messageBefore=" + (url.searchParams.has("messageBefore") ? Number(url.searchParams.get("messageBefore")) : "latest")
+          : "";
+        console.warn(`Fixture ${method} ${url.pathname}${cursor} returned ${response.status}`);
         if (url.pathname === "/api/runs" && url.searchParams.get("stream") === "1") {
           console.warn(`Fixture run stream after cursor ${Number(url.searchParams.get("after"))}`);
         }

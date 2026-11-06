@@ -16,6 +16,7 @@ INFOPLIST_KEY_UILaunchScreen_Generation = YES
 INFOPLIST_KEY_NSLocalNetworkUsageDescription = Connect to your self-hosted Metis server on your local network.
 INFOPLIST_KEY_NSFaceIDUsageDescription = Confirm that you want to approve a Metis action.
 INFOPLIST_KEY_NSCameraUsageDescription = Take a photo to attach to a Metis message.
+INFOPLIST_KEY_NSMicrophoneUsageDescription = Record audio for Metis voice input when you choose the microphone.
 METIS_APNS_ENVIRONMENT = production
 METIS_APNS_ENTITLEMENT = production
 INFOPLIST_KEY_MetisAPNSEnvironment = $(METIS_APNS_ENVIRONMENT)

@@ -23,6 +23,22 @@ private struct RootView: View {
     @State private var username = ""
     @State private var password = ""
     @State private var client: MetisAPI?
+    @State private var webWorkspace: MetisWebWorkspace?
+    @State private var iPhoneSettings = false
+    @State private var iPhonePushSettings = false
+    @State private var nativeActivity = false
+    @State private var handoffChat: ChatSummary?
+    @State private var pendingHandoff: ChatSummary?
+    @State private var webNavigationError: String?
+    @State private var webSessionRevision = 0
+
+    private var nativeInterface: Bool {
+        #if DEBUG
+        ProcessInfo.processInfo.arguments.contains("-metis.native-interface")
+        #else
+        false
+        #endif
+    }
     @State private var chats: [ChatSummary] = []
     @State private var navigation: [ChatSummary] = []
     @State private var search = ""
@@ -60,7 +76,13 @@ private struct RootView: View {
 
     @ViewBuilder private var content: some View {
         if let client {
-            TabView(selection: $destination) {
+            Group {
+                if !nativeInterface, let webWorkspace {
+                    WebWorkspaceView(workspace: webWorkspace, origin: client.origin) {
+                        iPhoneSettings = true
+                    }
+                } else {
+                    TabView(selection: $destination) {
                 chatList(client)
                     .tabItem { Label("Chats", systemImage: "bubble.left.and.bubble.right") }
                     .tag(Destination.chats)
@@ -84,6 +106,42 @@ private struct RootView: View {
                 } unauthorized: { expire(client) }
                     .tabItem { Label("Settings", systemImage: "gear") }
                     .tag(Destination.settings)
+                    }
+                }
+            }
+            .sheet(isPresented: $iPhoneSettings) {
+                iPhoneConnectionSettings(client)
+            }
+            .sheet(isPresented: $nativeActivity) {
+                NavigationStack {
+                    ActivityView(client: client, chats: chats, openChat: { id in
+                        nativeActivity = false
+                        Task { await openChat(id, client: client) }
+                    }, unauthorized: { expire(client) })
+                    .toolbar { ToolbarItem(placement: .confirmationAction) { Button("Done") { nativeActivity = false } } }
+                }
+            }
+            .sheet(item: $handoffChat) { chat in
+                NavigationStack {
+                    ChatDetail(chat: chat, client: client, syncRevision: detailRevision, draft: Binding(
+                        get: { composerDrafts[chat.id] },
+                        set: { if self.client === client { composerDrafts[chat.id] = $0 } }
+                    )) { expire(client) }
+                    .toolbar { ToolbarItem(placement: .confirmationAction) {
+                        Button("Done") {
+                            handoffChat = nil
+                            webWorkspace?.openChat(id: chat.id)
+                        }
+                    } }
+                }
+            }
+            .alert("Could not open chat", isPresented: Binding(
+                get: { webNavigationError != nil },
+                set: { if !$0 { webNavigationError = nil } }
+            )) {
+                Button("OK", role: .cancel) { webNavigationError = nil }
+            } message: {
+                Text(verbatim: webNavigationError ?? "")
             }
             .task(id: intentInbox.draft?.id) {
                 if let draft = intentInbox.draft {
@@ -93,7 +151,8 @@ private struct RootView: View {
             }
             .task(id: intentInbox.activityRequest) {
                 if intentInbox.activityRequest != nil {
-                    destination = .activity
+                    if nativeInterface { destination = .activity }
+                    else { nativeActivity = true }
                     intentInbox.activityRequest = nil
                 }
             }
@@ -103,7 +162,7 @@ private struct RootView: View {
                     shortcutDraft = .init(text: text)
                 }
                 await refresh(client)
-                if !Task.isCancelled { await syncChats(client) }
+                if !Task.isCancelled, nativeInterface || watchEnabled { await syncChats(client) }
             }
             .onChange(of: watchEnabled) { _, enabled in
                 watch.enabled = enabled
@@ -114,8 +173,12 @@ private struct RootView: View {
                 defer { if watch.openChatID == id { watch.openChatID = nil } }
                 await openChat(id, client: client)
             }
-            .task(id: pushRequested ? push.token : nil) {
-                if pushRequested, let token = push.token { await registerPush(client, token: token) }
+            .task(id: pushRequested ? "\(webSessionRevision):\(push.token ?? "")" : nil) {
+                do {
+                    while pushBusy { try await Task.sleep(for: .milliseconds(50)) }
+                } catch { return }
+                guard !Task.isCancelled, self.client === client, pushRequested, let token = push.token else { return }
+                await registerPush(client, token: token)
             }
             .onChange(of: push.registrationFailed) { _, failed in
                 if failed && pushRequested {
@@ -137,12 +200,18 @@ private struct RootView: View {
                     if let token = push.token { Task { await registerPush(client, token: token) } }
                 }
             }
-            .sheet(item: $shortcutDraft) { draft in
+            .sheet(item: $shortcutDraft, onDismiss: {
+                if let pendingHandoff {
+                    self.pendingHandoff = nil
+                    handoffChat = pendingHandoff
+                }
+            }) { draft in
                 ShortcutDraftView(draft: draft, chats: chats) { chat, text in
                     let combined = composerDrafts[chat.id].map { $0.text + "\n\n" + text } ?? text
                     composerDrafts[chat.id] = ComposerDraft(text: combined)
                     destination = .chats
                     navigation = [chat]
+                    if !nativeInterface { pendingHandoff = chat }
                 } create: { text in
                     Task { await newChat(client, draft: text) }
                 }
@@ -436,11 +505,65 @@ private struct RootView: View {
     private func connect(_ candidate: MetisAPI, chats: [ChatSummary], stored: StoredMetisSession?) {
         self.chats = chats
         client = candidate
+        if !nativeInterface {
+            webWorkspace = MetisWebWorkspace(client: candidate, unauthorized: { expire(candidate) },
+                                             sessionChanged: { synchronizeWebSession(candidate) })
+        }
         intentInbox.statusClient = candidate
         watch.client = candidate
         watchEnabled = stored?.watchEnabled ?? false
         watch.enabled = watchEnabled
         if let events = stored?.pushEvents { pushEvents = Set(events.compactMap(MobilePushKind.init(rawValue:))) }
+    }
+
+    private func synchronizeWebSession(_ current: MetisAPI) {
+        guard client === current, var updated = current.sessionRecord(),
+              let previous = MetisSessionVault.active, previous.origin == updated.origin else { return }
+        guard previous.cookie != updated.cookie || previous.expiresAt != updated.expiresAt else { return }
+        updated.pushEvents = previous.pushEvents
+        updated.watchEnabled = previous.watchEnabled
+        // A revocation ticket belongs to one session, so rotation needs a new
+        // ticket. Persist the cookie before attempting the optional mobile API.
+        MetisSessionVault.replace(updated)
+        if pushRequested { pushRegistered = false }
+        webSessionRevision &+= 1
+        let snapshot = updated
+        let expectedCookie = snapshot.cookie
+        Task {
+            guard let address = try? ServerAddress(snapshot.origin) else { return }
+            let captured = MetisAPI(address: address, restore: snapshot)
+            defer { captured.invalidate() }
+            let ticket = (UUID().uuidString + UUID().uuidString).replacingOccurrences(of: "-", with: "").lowercased()
+            do {
+                try await captured.enrollLogoutTicket(ticket)
+                guard client === current, var active = MetisSessionVault.active,
+                      active.cookie == expectedCookie, active.origin == current.origin else { return }
+                active.revocationTicket = ticket
+                MetisSessionVault.replace(active)
+            } catch {}
+        }
+    }
+
+    private func iPhoneConnectionSettings(_ current: MetisAPI) -> some View {
+        ConnectionSettingsView(client: current, installationID: installationID,
+                               watchEnabled: $watchEnabled, pushEnabled: pushRegistered,
+                               showPush: { iPhonePushSettings = true },
+                               signOut: { Task { await signOut(current) } }, busy: busy, status: notice,
+                               didRemoveCurrentDevice: {
+                                   pushRequested = false
+                                   pushRegistered = false
+                                   saveSessionPreferences()
+                               }, unauthorized: { expire(current) }, title: "iPhone settings")
+            .toolbar { ToolbarItem(placement: .confirmationAction) {
+                Button("Done") { iPhoneSettings = false }
+            } }
+            .sheet(isPresented: $iPhonePushSettings) {
+                PushSettingsView(events: $pushEvents, enabled: pushRequested, busy: pushBusy, status: notice) {
+                    Task { await changePush(current) }
+                } save: {
+                    if let token = push.token { Task { await registerPush(current, token: token) } }
+                }
+            }
     }
 
     private func saveSessionPreferences() {
@@ -462,9 +585,10 @@ private struct RootView: View {
         }
     }
 
-    private func refresh(_ current: MetisAPI) async {
+    private func refresh(_ current: MetisAPI, allowWebCookieRetry: Bool = true) async {
         let archived = includeArchived
         let revision = chatRevision
+        let requestedCookie = current.webSessionCookie()?.value
         do {
             let updated = try await current.chats(includeArchived: archived)
             guard client === current, !Task.isCancelled, archived == includeArchived,
@@ -474,6 +598,13 @@ private struct RootView: View {
         } catch {
             guard client === current, !Task.isCancelled else { return }
             if case MetisError.unauthorized = error {
+                if !nativeInterface, allowWebCookieRetry, let webWorkspace,
+                   await webWorkspace.refreshSessionCookie(), client === current,
+                   current.webSessionCookie()?.value != requestedCookie {
+                    await refresh(current, allowWebCookieRetry: false)
+                    return
+                }
+                guard client === current, !Task.isCancelled else { return }
                 clearSession(notice: error.localizedDescription)
             } else {
                 notice = message(for: error)
@@ -522,6 +653,13 @@ private struct RootView: View {
             if let draft { composerDrafts[chat.id] = ComposerDraft(text: draft) }
             destination = .chats
             navigation.append(chat)
+            if !nativeInterface {
+                if draft != nil {
+                    if shortcutDraft != nil { pendingHandoff = chat }
+                    else { handoffChat = chat }
+                }
+                else { webWorkspace?.openChat(id: chat.id) }
+            }
         } catch MetisError.unauthorized {
             clearSession(notice: MetisError.unauthorized.localizedDescription)
         } catch {
@@ -543,8 +681,14 @@ private struct RootView: View {
             guard client === current, !Task.isCancelled else { return }
             destination = .chats
             navigation = [ChatSummary(id: id, title: detail.title, runStatus: detail.runStatus, pinned: nil, archived: nil, projectId: nil)]
+            if !nativeInterface { webWorkspace?.openChat(id: id) }
         } catch MetisError.unauthorized { expire(current) }
-        catch { if !Task.isCancelled { notice = message(for: error) } }
+        catch {
+            if !Task.isCancelled {
+                notice = message(for: error)
+                if !nativeInterface { webNavigationError = message(for: error) }
+            }
+        }
     }
 
     private func expire(_ current: MetisAPI) {
@@ -580,6 +724,7 @@ private struct RootView: View {
 
     private func registerPush(_ current: MetisAPI, token: String) async {
         guard !pushBusy, let topic = Bundle.main.bundleIdentifier else { return }
+        let registrationRevision = webSessionRevision
         pushBusy = true
         defer { pushBusy = false }
         #if DEBUG
@@ -590,16 +735,20 @@ private struct RootView: View {
         do {
             try await current.registerPush(installationID: installationID, token: token, topic: topic, environment: environment,
                                            events: pushEvents.map(\.rawValue).sorted())
-            guard client === current, pushRequested else {
+            guard client === current, registrationRevision == webSessionRevision else { return }
+            guard pushRequested else {
                 try? await current.revokePush(installationID: installationID)
                 return
             }
+            guard !Task.isCancelled else { return }
             pushRegistered = true
             saveSessionPreferences()
             notice = "Push alerts enabled."
-        } catch MetisError.unauthorized { expire(current) }
-        catch {
-            if client === current, pushRequested, !Task.isCancelled {
+        } catch MetisError.unauthorized {
+            guard !Task.isCancelled, client === current, registrationRevision == webSessionRevision else { return }
+            expire(current)
+        } catch {
+            if client === current, registrationRevision == webSessionRevision, pushRequested, !Task.isCancelled {
                 pushRequested = false
                 notice = message(for: error)
             }
@@ -659,6 +808,16 @@ private struct RootView: View {
             _ = MetisSessionVault.close()
             client?.invalidate()
         }
+        let previousWorkspace = webWorkspace
+        webWorkspace = nil
+        if let previousWorkspace { Task { await previousWorkspace.invalidate() } }
+        iPhoneSettings = false
+        iPhonePushSettings = false
+        nativeActivity = false
+        handoffChat = nil
+        pendingHandoff = nil
+        webNavigationError = nil
+        webSessionRevision = 0
         client = nil
         intentInbox.statusClient = nil
         watch.client = nil

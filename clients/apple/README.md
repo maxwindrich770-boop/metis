@@ -7,13 +7,26 @@ watchOS 8+ companion. For signed builds, follow the
 
 Enter the canonical HTTPS origin of a configured Metis server, such as
 `https://metis.example.com`, and sign in with an existing Metis account.
-The app checks that the session can read the chat list before displaying it.
-Create or open a chat, send a message, and watch the server stream. Use
-**Stop** to cancel a run or **Load earlier messages** to read older pages.
-The tab bar contains Chats, Activity, Projects and Settings. The chat filter
-can show archived chats. Manage push and Watch access in Settings.
-The app remembers the active server and restores a valid cookie
-from the device Keychain after restart. Use the system keyboard microphone for dictation.
+The approved native sign-in checks the session against the chat API, then
+opens the server's **complete responsive Metis Web UI inside the app**.
+Chat appearance, rich messages, model/effort/fast controls, mode and access
+selection, context/usage, workspace panels and account settings therefore
+use the same implementation and live contracts as the website.
+
+On iPhone the Web UI's chat drawer and full-screen workspace replace the
+desktop's side columns. Open account Settings for providers/API keys,
+appearance, agent settings, devices and the other sections available to
+your account. Server permissions and discovered model capabilities remain
+authoritative; unavailable options are not invented by the iPhone client.
+
+The small **App** menu opens **iPhone settings** for native Watch/push access,
+connection details and sign-out, plus reload/back/forward. It hides while
+the keyboard is visible. The app restores its session from Keychain after
+restart. Shared-text and shortcut drafts retain their native review composer;
+push/Watch chat links open the corresponding Web chat.
+
+See [Web workspace integration](#web-workspace-integration) for authentication,
+downloads, external sites and verification boundaries.
 
 On a paired Watch, opt in under **Allow Apple Watch access** on the iPhone.
 The Watch can list chats and pending requests, send short prompts after
@@ -55,12 +68,12 @@ watchOS 8 deployment support in Xcode 26.6. A successful source typecheck at
 
 ## Native appearance
 
-The iPhone views use the current Metis web app's flat neutral palette, compact
-controls and original vector wordmark. Light and dark appearance follow the
-device. The sign-in screen uses labeled fields, chats show their server and
-available activity metadata, and the conversation keeps assistant text open
-with muted user bubbles and a bordered composer. The model menu sits beside
-the attachment control; available models still come from the server.
+The native sign-in keeps the Metis palette, labeled fields and original
+vector wordmark. The post-login Web workspace uses the actual server UI and
+its account appearance settings. It is not a separately restyled Swift copy
+of the website. Native device sheets use the device's light/dark appearance.
+The previous native chat interface remains available only to Debug regression
+tests with the explicit launch flag `-metis.native-interface`.
 
 Design references: `app/globals.css`, `components/app-shell.tsx`,
 `components/composer-add-menu.tsx`, and `public/metis-wordmark.svg` in
@@ -78,6 +91,54 @@ current-SDK simulator build uses an explicit 9.0 override and its process
 started on watchOS 27.2. Direct watchOS 8 execution, manual Watch navigation
 and VoiceOver verification remain open. No physical-device installation or
 production deployment was performed in this simulator validation pass.
+
+## Web workspace integration
+
+`MetisWebWorkspace.swift` owns a unique nonpersistent WebKit data store.
+It installs the validated host-only HttpOnly session cookie before loading
+the configured origin. Cookie rotation updates the native session/Keychain;
+logout or an unauthorized page clears the workspace and returns to native
+sign-in. Authentication is never injected into JavaScript or a navigation URL.
+The embedded browser does not share this session with external sites.
+
+User-activated external links open a Safari sheet. Scripted setup popups from
+the trusted first-party page require a native confirmation showing the host;
+unsolicited off-origin redirects remain blocked. First-party downloads use a
+unique managed temporary folder and the system share sheet. Only owned
+temporary files are removed after dismissal. Web file inputs and media
+permission prompts stay under system/user control; microphone and camera
+usage descriptions are included.
+
+No Web backend deployment is needed for the primary workspace: it loads the
+configured server's currently installed UI. Mobile-only device registration,
+offline revocation tickets and Watch helpers still depend on their existing
+server endpoints and report unavailable when those endpoints are absent.
+The Personal Team variant's Push/Share/Watch limitations below still apply.
+A Web surface exposes existing server features; it does not prove every
+provider OAuth flow, device capability or account setting has been exercised.
+
+For focused Mac verification:
+
+```sh
+swiftc clients/apple/MetisiOS/MetisWebWorkspace.swift \
+  clients/apple/Tests/WebWorkspacePolicySmoke.swift -o /tmp/metis-web-policy-smoke
+/tmp/metis-web-policy-smoke
+
+# Use a fresh fixture/database for the API smoke test, separate from UI tests.
+node --import tsx clients/apple/Tests/fixture-server.ts 43102
+# In another terminal:
+swiftc -D DEBUG -parse-as-library clients/apple/MetisiOS/MetisAPI.swift \
+  clients/apple/Tests/Smoke.swift -o /tmp/metis-apple-api-smoke
+/tmp/metis-apple-api-smoke http://localhost:43102
+
+```
+
+The default Web XCUITests exercise native login, HttpOnly authentication,
+a persisted server action, app restart, cookie rotation, logout, downloads,
+external links and scripted popup confirmation. Their loopback HTML fixture
+is explicitly synthetic integration content, **not** a screenshot of the
+Metis Web design. Preserve the existing native regression tests using their
+explicit Debug flag.
 
 ## Personal Team iPhone test
 

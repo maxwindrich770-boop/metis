@@ -322,6 +322,7 @@ struct ConnectionSettingsView: View {
     let status: String?
     let didRemoveCurrentDevice: () -> Void
     let unauthorized: () -> Void
+    var title: LocalizedStringKey = "Settings"
     @Environment(\.openURL) private var openURL
     @State private var account: String?
     @State private var devices: [MetisRegisteredDevice] = []
@@ -374,7 +375,7 @@ struct ConnectionSettingsView: View {
                 if let status { Text(status).font(.footnote) }
             }
             .metisScreen()
-            .navigationTitle("Settings")
+            .navigationTitle(title)
             .task { await load() }
             .refreshable { await load() }
         }

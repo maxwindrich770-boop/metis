@@ -1,0 +1,134 @@
+import Foundation
+
+private struct WebPolicyFailure: Error, CustomStringConvertible {
+    let description: String
+}
+
+/// Build with MetisWebWorkspace.swift alone; UIKit/WebKit are not required.
+@main
+struct WebWorkspacePolicySmoke {
+    static func main() {
+        do {
+            try verifyOrigins()
+            try verifyFrames()
+            try verifyDownloadNames()
+            print("Web workspace policy smoke passed")
+        } catch {
+            FileHandle.standardError.write(Data("Web workspace policy smoke failed: \(error)\n".utf8))
+            exit(EXIT_FAILURE)
+        }
+    }
+
+    private static func check(_ condition: Bool, _ description: String) throws {
+        guard condition else { throw WebPolicyFailure(description: description) }
+    }
+
+    private static func url(_ value: String) -> URL { URL(string: value)! }
+
+    private static func verifyOrigins() throws {
+        let server = url("https://metis.example")
+        for candidate in [
+            "https://metis.example",
+            "https://metis.example:443/",
+            "https://METIS.EXAMPLE/chats?c=fixture#message",
+        ] {
+            try check(MetisWebPolicy.isSameOrigin(url(candidate), server: server),
+                      "Same origin was rejected: \(candidate)")
+        }
+        try check(MetisWebPolicy.isSameOrigin(url("https://metis.example/path"),
+                                            server: url("https://metis.example:443")),
+                  "An explicit default HTTPS port changed the origin")
+        try check(MetisWebPolicy.isSameOrigin(url("http://localhost:80/path"), server: url("http://localhost")),
+                  "An explicit default HTTP port changed the origin")
+        try check(MetisWebPolicy.isSameOrigin(url("https://metis.example:8443/path"),
+                                            server: url("https://metis.example:8443")),
+                  "Matching explicit nondefault ports were rejected")
+
+        for candidate in [
+            "https://metis.example:444/",
+            "https://child.metis.example/",
+            "https://metis.example.invalid/",
+            "http://metis.example/",
+            "http://metis.example:443/",
+            "https://user@metis.example/",
+            "https://user:password@metis.example/",
+            "file:///tmp/metis.example",
+            "javascript:alert(1)",
+            "blob:https://metis.example/fixture",
+        ] {
+            try check(!MetisWebPolicy.isSameOrigin(url(candidate), server: server),
+                      "An origin boundary was accepted: \(candidate)")
+        }
+        try check(!MetisWebPolicy.isSameOrigin(url("https://metis.example/"),
+                                             server: url("https://metis.example:8443")),
+                  "A missing nondefault port crossed the origin boundary")
+
+        for candidate in ["blob:https://metis.example/fixture", "blob:https://metis.example:443/fixture"] {
+            try check(MetisWebPolicy.isFirstPartyBlob(url(candidate), server: server),
+                      "A first-party blob was rejected")
+        }
+        for candidate in [
+            "blob:https://other.example/fixture",
+            "blob:https://metis.example:8443/fixture",
+            "blob:http://metis.example/fixture",
+            "blob:https://user:password@metis.example/fixture",
+            "blob:null/fixture",
+            "https://metis.example/fixture",
+        ] {
+            try check(!MetisWebPolicy.isFirstPartyBlob(url(candidate), server: server),
+                      "A foreign or opaque blob was accepted: \(candidate)")
+        }
+
+        for candidate in ["https://provider.example/oauth", "http://127.0.0.1:43100/fixture-external"] {
+            try check(MetisWebPolicy.isExternalLink(url(candidate)), "A normal user link was rejected")
+        }
+        for candidate in ["javascript:alert(1)", "data:text/plain,fixture", "file:///tmp/fixture",
+                          "https://user:password@provider.example/", "/relative"] {
+            try check(!MetisWebPolicy.isExternalLink(url(candidate)), "An unsafe external link was accepted")
+        }
+    }
+
+    private static func verifyFrames() throws {
+        let server = url("https://metis.example")
+        try check(MetisWebPolicy.permitsSubframe(url("https://metis.example/preview"), server: server,
+                                               firstPartySource: false),
+                  "A same-origin frame was rejected")
+        for candidate in ["data:text/plain,public-fixture", "about:blank", "blob:https://metis.example/fixture"] {
+            try check(MetisWebPolicy.permitsSubframe(url(candidate), server: server, firstPartySource: true),
+                      "Trusted preview frame was rejected: \(candidate)")
+            try check(!MetisWebPolicy.permitsSubframe(url(candidate), server: server, firstPartySource: false),
+                      "An untrusted source created a preview frame: \(candidate)")
+        }
+        for candidate in ["https://other.example/preview", "blob:https://other.example/fixture",
+                          "about:srcdoc", "javascript:alert(1)", "file:///tmp/fixture"] {
+            try check(!MetisWebPolicy.permitsSubframe(url(candidate), server: server, firstPartySource: true),
+                      "A foreign or executable preview frame was accepted: \(candidate)")
+        }
+    }
+
+    private static func verifyDownloadNames() throws {
+        let names: [(String, String)] = [
+            ("report.txt", "report.txt"),
+            ("../../report.txt", "report.txt"),
+            ("..\\..\\report.txt", "report.txt"),
+            ("/private/tmp/report.txt", "report.txt"),
+            (" ..report.txt.. \n", "report.txt"),
+            ("report\u{0000}\u{000A}.txt", "report.txt"),
+            ("\u{202E}report\u{202C}.txt", "report.txt"),
+            ("\u{2066}report\u{2069}.txt", "report.txt"),
+            (" \t..\n", "Download"),
+            ("/", "Download"),
+            ("...", "Download"),
+            ("", "Download"),
+        ]
+        for (input, expected) in names {
+            try check(MetisWebPolicy.safeDownloadName(input) == expected,
+                      "Unsafe download filename was not sanitized")
+        }
+        for input in [String(repeating: "a", count: 400), String(repeating: "🌱", count: 100)] {
+            let safe = MetisWebPolicy.safeDownloadName(input)
+            try check(!safe.isEmpty && safe.utf8.count <= 180, "Download filename was not bounded in bytes")
+            try check(!safe.contains("\u{FFFD}"), "Truncating a filename split a Unicode character")
+        }
+    }
+}

@@ -18,6 +18,41 @@ struct Smoke {
         }
     }
 
+    private static func verifyWebCookieBoundary(client: MetisAPI) throws {
+        guard let cookie = client.webSessionCookie(), let expires = cookie.expiresDate else {
+            throw SmokeFailure(step: "Missing HttpOnly cookie for the Web workspace")
+        }
+        try check(cookie.isHTTPOnly, "Web cookie is readable by scripts")
+        try client.updateWebSessionCookie(cookie)
+        let original: [HTTPCookiePropertyKey: Any] = [
+            .name: cookie.name, .value: cookie.value, .domain: cookie.domain,
+            .path: cookie.path, .expires: expires,
+            HTTPCookiePropertyKey(rawValue: "HttpOnly"): "TRUE",
+        ]
+        let invalid: [[HTTPCookiePropertyKey: Any]] = [
+            [.domain: "unrelated.invalid"],
+            [.domain: "." + cookie.domain],
+            [.path: "/other"],
+            [.name: "different-cookie"],
+            [.value: ""],
+            [.expires: Date(timeIntervalSince1970: 1)],
+        ]
+        var candidates = invalid.map { changes in original.merging(changes) { _, updated in updated } }
+        var readableByScripts = original
+        readableByScripts.removeValue(forKey: HTTPCookiePropertyKey(rawValue: "HttpOnly"))
+        candidates.append(readableByScripts)
+        for properties in candidates {
+            guard let candidate = HTTPCookie(properties: properties) else {
+                throw SmokeFailure(step: "Malformed boundary test cookie")
+            }
+            do {
+                try client.updateWebSessionCookie(candidate)
+                throw SmokeFailure(step: "An out-of-scope Web cookie was accepted")
+            } catch MetisError.unauthorized {}
+            try check(client.webSessionCookie()?.value == cookie.value, "Rejected cookie changed the native session")
+        }
+    }
+
     private static func run() async throws {
         try verifyEventFraming()
         let input = CommandLine.arguments.dropFirst().first ?? "http://localhost:43100"
@@ -50,6 +85,7 @@ struct Smoke {
         try check(try await alice.profileName() == "metis-apple-fixture-alice", "Authenticated account profile")
         try check(try await alice.chats() == aliceChats, "Second sign-in changed first client's session")
 
+        try verifyWebCookieBoundary(client: alice)
         try await verifyModelSelection(client: alice)
 
         let chatID = aliceChats[0].id
