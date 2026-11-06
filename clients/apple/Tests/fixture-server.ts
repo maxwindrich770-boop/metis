@@ -129,8 +129,8 @@ function webSidebarFixture(username: string) {
 [hidden]{display:none!important}button,input{font:inherit}button{min-height:44px;border:1px solid #989b90;border-radius:10px;padding:8px 12px;color:inherit;background:var(--popover)}
 .metis-shell{height:100dvh;overflow:hidden;padding:12px}header{display:flex;gap:8px;align-items:center;min-height:56px}
 main{padding:12px;overflow:auto;height:calc(100% - 56px)}h1{font-size:22px}#sidebar-state{font-size:10px;overflow-wrap:anywhere}
-#sidebar-close-overlay{position:fixed;inset:0;z-index:10;background:#0002;opacity:0;pointer-events:none;border:0}
-aside[aria-label="Chats sidebar"]{position:fixed;inset:0 auto 0 0;z-index:20;width:min(320px,calc(100vw - 44px));background:var(--popover);border-right:1px solid #999}
+#sidebar-close-overlay{position:fixed;inset:0;z-index:10;background:#0002;opacity:0;pointer-events:none;border:0;transition:opacity 200ms}
+aside[aria-label="Chats sidebar"]{position:fixed;inset:0 auto 0 0;z-index:20;width:min(320px,calc(100vw - 44px));background:var(--popover);border-right:1px solid #999;transition:transform 200ms ease-out}
 .visible{visibility:visible;transform:translateX(0)}.invisible{visibility:hidden;transform:translateX(-100%)}
 .sidebar-inner{height:100%;display:flex;flex-direction:column;overflow:hidden}.brand{padding:24px 12px 8px;flex:none}
 .sidebar-nav{padding:12px 8px 4px;flex:none}.sidebar-nav>button{display:flex;width:100%;gap:8px;text-align:left;border:0;font-size:13px;padding:8px 10px}
@@ -182,7 +182,7 @@ aside[aria-label="Chats sidebar"]{position:fixed;inset:0 auto 0 0;z-index:20;wid
     const pageInstance = crypto.randomUUID();
     let activeDestination = "New chat", closeCount = 0, selectionCount = 0;
     let projectExpanded = false, agentMode = false, accountMenuOpen = false;
-    let transition = null, transitionRevision = 0, verification = false;
+    let transition = null, transitionRevision = 0, verification = false, closeMotion = null;
     function sidebarOpen() { return sidebar.classList.contains("visible"); }
     function measure() {
       const box = sidebar.getBoundingClientRect(), footer = el("sidebar-footer").getBoundingClientRect();
@@ -200,7 +200,7 @@ aside[aria-label="Chats sidebar"]{position:fixed;inset:0 auto 0 0;z-index:20;wid
     function report() {
       const state = { pageInstance, activeDestination, sidebarOpen: sidebarOpen(), closeCount, selectionCount,
         projectExpanded, agentMode, accountMenuOpen, searchOpen: !dialog.hidden, query: search.value,
-        authenticated: verification, metrics: measure(), transition };
+        authenticated: verification, metrics: measure(), transition, closeMotion };
       el("sidebar-state").textContent = "Synthetic sidebar state: " + JSON.stringify(state);
       el("search-state").textContent = "Synthetic sidebar search state: " + JSON.stringify(state);
     }
@@ -228,7 +228,28 @@ aside[aria-label="Chats sidebar"]{position:fixed;inset:0 auto 0 0;z-index:20;wid
     el("nav-notebooks").addEventListener("click", () => select("Notebooks"));
     el("nav-automations").addEventListener("click", () => select("Automations"));
     el("sidebar-open").addEventListener("click", () => setSidebar(true));
-    overlay.addEventListener("click", () => { closeCount++; setSidebar(false); });
+    overlay.addEventListener("click", () => {
+      closeCount++;
+      const revision = closeCount, started = performance.now(), samples = [];
+      const snapshot = () => {
+        const box = sidebar.getBoundingClientRect();
+        return { right: box.right, width: box.width, visibility: getComputedStyle(sidebar).visibility };
+      };
+      const initial = snapshot();
+      closeMotion = null;
+      setSidebar(false);
+      function sample(now) {
+        if (revision !== closeCount || sidebarOpen()) return;
+        samples.push(snapshot());
+        if (now - started < 450) { requestAnimationFrame(sample); return; }
+        closeMotion = { revision, initial, final: snapshot(), frames: samples.length,
+          reducedMotion: matchMedia("(prefers-reduced-motion: reduce)").matches,
+          visibleMovingFrames: samples.filter(item => item.right > 1 && item.right < initial.right - 1 && item.visibility === "visible").length,
+          hiddenBeforeOffscreen: samples.some(item => item.right > 1 && item.visibility === "hidden") };
+        report();
+      }
+      requestAnimationFrame(sample);
+    });
     el("project-expand").addEventListener("click", () => { projectExpanded = !projectExpanded; report(); });
     el("programmatic-nav").addEventListener("click", () => el("nav-new").click());
     el("agent-mode").addEventListener("click", () => {

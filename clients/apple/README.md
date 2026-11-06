@@ -86,7 +86,9 @@ of the website. Native device sheets use the device's light/dark appearance. App
 Liquid Glass on iOS 26+, with material controls on older supported iOS releases
 and opaque controls for reduced-transparency or increased-contrast preferences.
 Mobile drawer selections for New chat, Notebooks and Automations reuse the
-existing close action after navigation. Search, account controls, project
+existing close action after navigation. The mobile drawer stays visible through
+its exit slide and hides only when it finishes; reopening shows it immediately,
+and reduced-motion settings skip the slide. Search, account controls, project
 expanders, New agent and desktop navigation retain their existing behavior.
 The drawer and its account/settings footer keep full-window geometry while
 search opens the input surface; the keyboard covers the footer. Search uses

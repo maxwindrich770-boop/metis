@@ -429,6 +429,22 @@ enum MetisAppWebPresentation {
           height: var(--metis-app-window-height, 100dvh);
           bottom: auto;
         }
+        /* The canonical drawer toggles visibility with its translate class.
+           Delay hiding until that slide ends; reopening is visible immediately.
+           Tailwind's duration token keeps both transitions in sync. */
+        @media (max-width: 767px) {
+          html[data-metis-native-app="ios"] aside[aria-label="Chats sidebar"] {
+            transition-property: transform, translate, visibility;
+            transition-duration: var(--tw-duration, 200ms), var(--tw-duration, 200ms), 0s;
+            transition-delay: 0s, 0s, var(--tw-duration, 200ms);
+          }
+          html[data-metis-native-app="ios"] aside[aria-label="Chats sidebar"].visible {
+            transition-delay: 0s;
+          }
+          html[data-metis-native-app="ios"] aside[aria-label="Chats sidebar"].invisible {
+            pointer-events: none;
+          }
+        }
         /* Match the content gutters inside the system-safe area. */
         html[data-metis-native-app="ios"] aside[aria-label="Chats sidebar"] [aria-label="Metis"]:not([role="img"]) {
           padding-top: var(--metis-app-sidebar-gutter);
@@ -554,6 +570,7 @@ enum MetisAppWebPresentation {
           }
         }
         @media (prefers-reduced-motion: reduce) {
+          html[data-metis-native-app="ios"] aside[aria-label="Chats sidebar"],
           html[data-metis-native-app="ios"] [data-metis-app-controls] {
             transition: none;
           }

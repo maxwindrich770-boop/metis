@@ -1272,10 +1272,25 @@ final class MetisUITests: XCTestCase {
             expectedCloses += 1
             let closed = XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in
                 guard let state = try? self.sidebarState(in: web) else { return false }
-                return !state.sidebarOpen && state.closeCount == expectedCloses
+                return !state.sidebarOpen && state.closeCount == expectedCloses && state.closeMotion?.revision == expectedCloses
             }, object: web)
             XCTAssertEqual(XCTWaiter.wait(for: [closed], timeout: 5), .completed,
                            "The same destination gesture must select the page and close the mobile drawer")
+            let motion = try XCTUnwrap(sidebarState(in: web).closeMotion)
+            XCTAssertGreaterThan(motion.frames, 5)
+            XCTAssertGreaterThan(motion.initial.right, motion.initial.width - 2)
+            XCTAssertLessThanOrEqual(motion.final.right, 1)
+            XCTAssertEqual(motion.final.visibility, "hidden")
+            XCTAssertFalse(motion.hiddenBeforeOffscreen,
+                           "The drawer must remain painted until its exit slide finishes")
+            if !motion.reducedMotion {
+                XCTAssertGreaterThan(motion.visibleMovingFrames, 1,
+                                     "Observe visible intermediate positions, not just a closed endpoint")
+            }
+            let attachment = XCTAttachment(data: try JSONEncoder().encode(motion), uniformTypeIdentifier: "public.json")
+            attachment.name = "sidebar-exit-motion-" + destination + "-" + String(expectedCloses)
+            attachment.lifetime = .keepAlways
+            add(attachment)
         }
         web.buttons["Open sidebar"].tap()
         web.buttons["Expand synthetic project"].tap()
@@ -1436,6 +1451,21 @@ final class MetisUITests: XCTestCase {
         let dialogTopRange: Double
     }
 
+    private struct SyntheticSidebarCloseMotion: Codable {
+        struct Position: Codable {
+            let right: Double
+            let width: Double
+            let visibility: String
+        }
+        let revision: Int
+        let initial: Position
+        let final: Position
+        let frames: Int
+        let reducedMotion: Bool
+        let visibleMovingFrames: Int
+        let hiddenBeforeOffscreen: Bool
+    }
+
     private struct SyntheticSidebarState: Decodable {
         let pageInstance: String
         let activeDestination: String
@@ -1450,6 +1480,7 @@ final class MetisUITests: XCTestCase {
         let authenticated: Bool
         let metrics: SyntheticSidebarMetrics
         let transition: SyntheticSidebarTransition?
+        let closeMotion: SyntheticSidebarCloseMotion?
     }
 
     @MainActor
