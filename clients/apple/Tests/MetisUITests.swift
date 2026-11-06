@@ -122,8 +122,7 @@ final class MetisUITests: XCTestCase {
         let app = XCUIApplication()
         app.launchArguments = [
             "-AppleLanguages", "(en)", "-AppleLocale", "en_US", "-metisServer", "",
-            "-UIPreferredContentSizeCategoryName", "UICTContentSizeCategoryAccessibilityXXXL",
-            "-AppleInterfaceStyle", "Dark"
+            "-UIPreferredContentSizeCategoryName", "UICTContentSizeCategoryAccessibilityXXXL"
         ]
         app.launch()
         defer { XCUIDevice.shared.orientation = .portrait }
@@ -139,11 +138,15 @@ final class MetisUITests: XCTestCase {
         reveal(password, in: app)
         password.tap()
         password.typeText("apple-fixture-only")
+        let keyboard = app.keyboards.firstMatch
+        XCTAssertTrue(keyboard.waitForExistence(timeout: 5))
+        XCTAssertTrue(keyboard.isHittable, "The software keyboard must be visible and interactive")
+        capture(app, named: "05-login-accessibility-keyboard")
         let signIn = app.buttons["metis.signIn"]
         reveal(signIn, in: app)
         XCTAssertGreaterThanOrEqual(signIn.frame.height, 44)
         XCTAssertTrue(signIn.isEnabled)
-        capture(app, named: "05-login-accessibility-keyboard-dark")
+        capture(app, named: "05b-login-accessibility-submit")
         XCUIDevice.shared.orientation = .landscapeLeft
         reveal(signIn, in: app)
         XCTAssertTrue(signIn.isHittable)
@@ -161,10 +164,36 @@ final class MetisUITests: XCTestCase {
 
     @MainActor
     private func capture(_ app: XCUIApplication, named name: String) {
-        let attachment = XCTAttachment(screenshot: app.screenshot())
+        let attachment = XCTAttachment(screenshot: XCUIScreen.main.screenshot())
         attachment.name = name
         attachment.lifetime = .keepAlways
         add(attachment)
+    }
+
+    @MainActor
+    func testWatchAccessOptInSurvivesRestart() {
+        let app = launch()
+        signIn(app, server: "http://localhost:43100")
+        XCTAssertTrue(app.buttons["Fixture chat"].waitForExistence(timeout: 15))
+        app.tabBars.buttons["Settings"].tap()
+        let watchAccess = app.switches["Allow Apple Watch access"]
+        XCTAssertTrue(watchAccess.waitForExistence(timeout: 5))
+        reveal(watchAccess, in: app)
+        XCTAssertEqual(watchAccess.value as? String, "0")
+        capture(app, named: "07a-watch-access-before-opt-in")
+        watchAccess.coordinate(withNormalizedOffset: CGVector(dx: 0.9, dy: 0.5)).tap()
+        let enabled = XCTNSPredicateExpectation(predicate: NSPredicate(format: "value == %@", "1"), object: watchAccess)
+        XCTAssertEqual(XCTWaiter.wait(for: [enabled], timeout: 5), .completed, app.debugDescription)
+        capture(app, named: "07b-watch-access-enabled")
+        app.terminate()
+        app.launchArguments = ["-AppleLanguages", "(en)", "-AppleLocale", "en_US"]
+        app.launch()
+        XCTAssertTrue(app.staticTexts["Fixture chat"].waitForExistence(timeout: 15))
+        app.tabBars.buttons["Settings"].tap()
+        XCTAssertTrue(watchAccess.waitForExistence(timeout: 5))
+        reveal(watchAccess, in: app)
+        XCTAssertEqual(watchAccess.value as? String, "1")
+        capture(app, named: "07-watch-access-opt-in-restored")
     }
 
     private func setFixtureSessionState(_ state: String) async throws {
@@ -186,7 +215,10 @@ final class MetisUITests: XCTestCase {
             if element.isHittable { return }
             transcript.swipeDown()
         }
-        XCTAssertTrue(element.isHittable, "Earlier message or page control could not be reached")
+        if !element.isHittable {
+            capture(XCUIApplication(), named: "paging-failure")
+        }
+        XCTAssertTrue(element.isHittable, "Earlier message or page control could not be reached: \(XCUIApplication().debugDescription)")
     }
 
     @MainActor

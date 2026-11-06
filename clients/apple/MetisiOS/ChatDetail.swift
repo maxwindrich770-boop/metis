@@ -76,8 +76,8 @@ struct ChatDetail: View {
 
     private var transcript: some View {
         List {
-            if let nextBefore = history.nextBefore {
-                Button("Load earlier messages") { Task { await load(before: nextBefore) } }
+            if history.nextBefore != nil {
+                Button("Load earlier messages") { Task { await loadEarlier() } }
                     .disabled(busy)
             }
             if busy {
@@ -688,6 +688,15 @@ struct ChatDetail: View {
         } catch {
             notice = message(for: error)
         }
+    }
+
+    private func loadEarlier() async {
+        while busy {
+            do { try await Task.sleep(for: .milliseconds(50)) }
+            catch { return }
+        }
+        guard !Task.isCancelled, let cursor = history.nextBefore else { return }
+        await load(before: cursor)
     }
 
     private func load(before: Int? = nil, clearNotice: Bool = true) async {

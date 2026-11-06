@@ -68,7 +68,8 @@ struct MetisField<Content: View>: View {
             Text(title).font(.subheadline.weight(.medium))
             HStack(spacing: 12) {
                 Image(systemName: symbol)
-                    .frame(width: 20)
+                    .font(.system(size: 18))
+                    .frame(width: 20, height: 20)
                     .foregroundStyle(MetisTheme.muted)
                     .accessibilityHidden(true)
                 content
