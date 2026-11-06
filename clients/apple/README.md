@@ -41,7 +41,7 @@ Design references: `app/globals.css`, `components/app-shell.tsx`,
 wordmark's paths and proportions and renders it as a light/dark template.
 
 The November native design changes were prepared on the Linux development
-server after the Mac was disconnected. Xcode compilation, updated simulator
+server with native Mac validation deferred. Xcode compilation, updated simulator
 screenshots, Dynamic Type/landscape checks, VoiceOver and signed iPhone
 installation still need to run on the Mac. The UI suite includes screenshot
 attachments and a sign-in keyboard/accessibility layout check for that pass.
