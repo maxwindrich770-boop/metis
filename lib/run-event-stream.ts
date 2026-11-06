@@ -11,6 +11,7 @@ export function createRunEventStream(options: {
   after: number;
   read: (after: number, limit: number) => RunEvent[];
   terminal: () => TerminalEvent | null;
+  authorized?: () => Promise<boolean>;
   snapshotOnly?: boolean;
   signal?: AbortSignal;
   pollMs?: number;
@@ -56,6 +57,16 @@ export function createRunEventStream(options: {
     async pull(controller) {
       try {
         while (!stopped) {
+          if (options.authorized) {
+            const authorized = await options.authorized();
+            if (stopped) return;
+            if (!authorized) {
+              controller.enqueue(encode("auth-expired", {}));
+              stop();
+              controller.close();
+              return;
+            }
+          }
           if (Date.now() >= deadline) {
             controller.enqueue(encode("status", { status: "reconnect", message: "Event stream window ended; reconnecting." }));
             stop();

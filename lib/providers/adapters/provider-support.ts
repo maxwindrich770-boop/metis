@@ -1070,7 +1070,7 @@ export async function consumeAiStream(
         const next = positions[0];
         if (!next) {
           if (final) {
-            const cleaned = stripRawToolMarkup(pendingText)
+            const cleaned = stripRawToolMarkup(pendingText, { preserveLeadingWhitespace: visibleText.length > 0 })
               .replace(/<tool_call>[\s\S]*$/i, "")
               .replace(/<\|tool_call_begin\|>[\s\S]*$/i, "");
             emitText(cleaned);
@@ -1096,7 +1096,7 @@ export async function consumeAiStream(
           const end = pendingText.indexOf("```", JSON_START.length);
           if (end < 0) {
             if (final) {
-              emitText(stripRawToolMarkup(pendingText));
+              emitText(stripRawToolMarkup(pendingText, { preserveLeadingWhitespace: visibleText.length > 0 }));
               pendingText = "";
             }
             return;

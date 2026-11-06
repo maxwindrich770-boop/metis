@@ -1,6 +1,7 @@
 import { notificationDatabase } from "./notification-store";
 import { cleanupExpiredIncognitoChats } from "./db-store";
 export { observeNotificationEvents, deliverPendingNotifications } from "./notification-observer";
+export { deliverMobilePush } from "./mobile-push";
 
 // Housekeeping belongs off the HTTP thread too. Expired chats are already hidden
 // by access checks; deleting their data no longer blocks sidebar polling.

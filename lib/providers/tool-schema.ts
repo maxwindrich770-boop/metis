@@ -43,13 +43,13 @@ export function sanitizeJsonSchema(input: unknown, depth = 0): Record<string, un
   return next;
 }
 
-export function stripRawToolMarkup(text: string) {
-  return text
+export function stripRawToolMarkup(text: string, { preserveLeadingWhitespace = false } = {}) {
+  const stripped = text
     .replace(/<tool_call>[\s\S]*?<\/tool_call>/gi, "")
     .replace(/<\|tool_call_begin\|>[\s\S]*?<\|tool_call_end\|>/gi, "")
     .replace(/```(?:json)?\s*\{\s*"name"\s*:\s*"[^"]+"[\s\S]*?```/gi, "")
-    .replace(/\n{3,}/g, "\n\n")
-    .trim();
+    .replace(/\n{3,}/g, "\n\n");
+  return preserveLeadingWhitespace ? stripped.trimEnd() : stripped.trim();
 }
 
 export type EmbeddedToolCall = { name: string; args: Record<string, unknown> };

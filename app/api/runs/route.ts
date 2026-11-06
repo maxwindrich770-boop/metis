@@ -19,19 +19,20 @@ export const dynamic = "force-dynamic";
 export const maxDuration = 3600;
 
 export async function GET(req: Request) {
-  if (!(await isAuthenticated(req)))
+  const userId = await getAuthenticatedUserId(req);
+  if (!userId)
     return Response.json({ error: "Unauthorized" }, { status: 401 });
   const search = new URL(req.url).searchParams;
   const chatId = search.get("chatId") || undefined;
   const jobId = search.get("jobId") || undefined;
   try {
-    const userId = (await getAuthenticatedUserId(req)) ?? undefined;
     const after = Number(search.get("after") || "0");
     if (chatId && search.get("events") === "1") {
       if (search.get("stream") === "1") {
         const stream = createRunEventStream({
           after: Number.isFinite(after) ? after : 0,
           signal: req.signal,
+          authorized: async () => await getAuthenticatedUserId(req) === userId,
           // Full deltas are the default; snapshot-only remains opt-in.
           snapshotOnly: search.get("mode") === "snapshot",
           read: (cursor, limit) => listRunEvents(chatId, userId, cursor, jobId, limit) as Array<{ id: number; event: string; data: unknown }>,

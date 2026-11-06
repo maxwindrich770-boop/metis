@@ -45,6 +45,9 @@ jobs:
       - name: Test remote client startup and device routing
         run: pnpm exec tsx --test tests/remote-client-startup.test.mjs tests/device-routing.test.ts
 
+      - name: Test Apple backend contracts
+        run: node --import tsx --test tests/mobile-apple.test.ts tests/chat-submit-worker.test.ts tests/run-event-stream.test.ts
+
       - name: Run local release contract test
         run: pnpm test:release
 
@@ -57,3 +60,43 @@ jobs:
 
       - name: Build application
         run: pnpm build
+
+  apple:
+    name: Build Apple clients and exercise the Swift API
+    runs-on: macos-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 9.15.4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - name: Build iPhone, Watch and Share Extension
+        run: |
+          xcodebuild -project clients/apple/MetisApple.xcodeproj -scheme Metis \
+            -configuration Debug -destination 'generic/platform=iOS Simulator' CODE_SIGNING_ALLOWED=NO -quiet build
+      - name: Test authenticated chat flows against isolated Metis handlers
+        run: |
+          set -euo pipefail
+          swiftc -D DEBUG clients/apple/MetisiOS/MetisAPI.swift clients/apple/Tests/Smoke.swift -o "$RUNNER_TEMP/metis-apple-smoke"
+          node --import tsx clients/apple/Tests/fixture-server.ts &
+          fixture_pid=$!
+          trap 'kill "$fixture_pid" 2>/dev/null || true' EXIT
+          for attempt in {1..30}; do
+            if curl --silent --output /dev/null http://localhost:43100/api/chats; then break; fi
+            sleep 1
+          done
+          "$RUNNER_TEMP/metis-apple-smoke"
+          device="$(xcrun simctl list devices available --json | node -e '
+            const fs = require("node:fs");
+            const runtimes = Object.entries(JSON.parse(fs.readFileSync(0, "utf8")).devices).reverse();
+            const phone = runtimes.flatMap(([, devices]) => devices).find(device => device.isAvailable && device.name.startsWith("iPhone"));
+            if (!phone) process.exit(1);
+            process.stdout.write(phone.udid);
+          ')"
+          xcodebuild -project clients/apple/MetisApple.xcodeproj -scheme Metis \
+            -destination "id=$device" -parallel-testing-enabled NO -quiet test

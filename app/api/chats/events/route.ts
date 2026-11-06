@@ -1,4 +1,4 @@
-import { getAuthenticatedUserId, isAuthenticated } from "@/lib/auth";
+import { getAuthenticatedUserId } from "@/lib/auth";
 import { captureApiError } from "@/lib/error-logs";
 import {
   latestChatSyncEventId,
@@ -19,9 +19,6 @@ function requestedCursor(req: Request) {
 }
 
 export async function GET(req: Request) {
-  if (!(await isAuthenticated(req))) {
-    return Response.json({ error: "Unauthorized" }, { status: 401 });
-  }
   const ownerId = await getAuthenticatedUserId(req);
   if (!ownerId) return Response.json({ error: "Unauthorized" }, { status: 401 });
 
@@ -51,9 +48,17 @@ export async function GET(req: Request) {
           resolve?.();
         };
         unsubscribe = subscribeToDatabaseChanges(notify);
-        const drain = () => {
+        const drain = async () => {
           let sent = false;
           while (!stopped) {
+            const authorized = await getAuthenticatedUserId(req) === ownerId;
+            if (stopped || req.signal.aborted) break;
+            if (!authorized) {
+              send("auth-expired", {});
+              stopped = true;
+              controller.close();
+              break;
+            }
             const rows = listChatSyncEvents(ownerId, cursor);
             if (!rows.length) break;
             for (const row of rows) {
@@ -70,35 +75,38 @@ export async function GET(req: Request) {
           return sent;
         };
 
-        if (cursor > 0) drain();
-        else cursor = latestChatSyncEventId(ownerId);
-        send("ready", { cursor }, cursor || undefined);
-        controller.enqueue(encoder.encode("retry: 1500\n\n"));
+        try {
+          if (cursor > 0) await drain();
+          else cursor = latestChatSyncEventId(ownerId);
+          send("ready", { cursor }, cursor || undefined);
+          if (!stopped) controller.enqueue(encoder.encode("retry: 1500\n\n"));
 
-        const deadline = Date.now() + 30 * 60 * 1000;
-        while (!stopped && !req.signal.aborted && Date.now() < deadline) {
-          if (!pendingChange) {
-            await new Promise<void>((resolve) => {
-              const timer = setTimeout(() => {
-                if (wake === finish) wake = null;
-                resolve();
-              }, 15_000);
-              const finish = () => {
-                clearTimeout(timer);
-                resolve();
-              };
-              wake = finish;
-              if (pendingChange) finish();
-            });
+          const deadline = Date.now() + 30 * 60 * 1000;
+          while (!stopped && !req.signal.aborted && Date.now() < deadline) {
+            if (!pendingChange) {
+              await new Promise<void>((resolve) => {
+                const timer = setTimeout(() => {
+                  if (wake === finish) wake = null;
+                  resolve();
+                }, 15_000);
+                const finish = () => {
+                  clearTimeout(timer);
+                  resolve();
+                };
+                wake = finish;
+                if (pendingChange) finish();
+              });
+            }
+            pendingChange = false;
+            const sent = await drain();
+            if (!sent && !stopped) {
+              try { controller.enqueue(encoder.encode(": heartbeat\n\n")); }
+              catch { stopped = true; }
+            }
           }
-          pendingChange = false;
-          const sent = drain();
-          if (!sent && !stopped) {
-            try { controller.enqueue(encoder.encode(": heartbeat\n\n")); }
-            catch { stopped = true; }
-          }
+        } finally {
+          unsubscribe();
         }
-        unsubscribe();
         if (!stopped) {
           stopped = true;
           try { controller.close(); } catch { /* already closed */ }

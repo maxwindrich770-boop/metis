@@ -17,6 +17,9 @@ Canonical docs live here. Root keeps only GitHub/agent entry points: `README.md`
 | [LONG-CHAT-PERFORMANCE.md](./LONG-CHAT-PERFORMANCE.md) | Long-history pagination, data preservation and performance measurements |
 | [NOTE-PIN-PERFORMANCE.md](./NOTE-PIN-PERFORMANCE.md) | Note pinning with many chats: measured bottlenecks and changed-only writes |
 | [RELEASE-TESTING.md](./RELEASE-TESTING.md) | Release and upgrade checks |
+| [APPLE-CLIENTS-IMPLEMENTATION.md](./APPLE-CLIENTS-IMPLEMENTATION.md) | Native iPhone client scope, verification and watchOS decision |
+| [APPLE-API-INVENTORY.md](./APPLE-API-INVENTORY.md) | Existing Metis API contracts for Apple clients |
+| [APPSTORE-RELEASE-CHECKLIST.md](./APPSTORE-RELEASE-CHECKLIST.md) | Signing, hardware tests and App Store handoff |
 
 ## Architecture (historical + current)
 

@@ -16,12 +16,16 @@ export async function GET(req: Request) {
     return Response.json({ error: "Unauthorized" }, { status: 401 });
   }
   try {
-    const includeArchived =
-      new URL(req.url).searchParams.get("includeArchived") === "true";
+    const query = new URL(req.url).searchParams;
+    const includeArchived = query.get("includeArchived") === "true";
+    const ids = query.getAll("id");
+    if (ids.length > 100 || ids.some((id) => !id || id.length > 200)) {
+      return Response.json({ error: "Invalid chat IDs" }, { status: 400 });
+    }
     return Response.json({
       chats: listChatsForUser(
         (await getAuthenticatedUserId(req)) ?? undefined,
-        { includeArchived },
+        { includeArchived, ids: ids.length ? ids : undefined },
       ),
     });
   } catch (error) {

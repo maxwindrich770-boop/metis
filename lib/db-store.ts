@@ -310,15 +310,16 @@ export function getChatNotePins(chatId: string, userId?: string): Pick<ChatSessi
 
 export function listChatsForUser(
   ownerId?: string,
-  options: { includeArchived?: boolean } = {},
+  options: { includeArchived?: boolean; ids?: readonly string[] } = {},
 ): ChatIndexEntry[] {
   // Expiry deletion runs in the background worker; sidebar reads never wait for a writer.
   const db = getDatabase();
   const dataVersion=JSON.stringify(db.prepare("PRAGMA data_version").get());
   const cacheKey = `${ownerId || "*"}:${options.includeArchived ? "all" : "active"}:${dataVersion}`;
-  if (chatIndexCache?.key === cacheKey && chatIndexCache.expiresAt > Date.now()) {
+  if (!options.ids && chatIndexCache?.key === cacheKey && chatIndexCache.expiresAt > Date.now()) {
     return ownerId ? chatIndexCache.chats.filter(chat => canAccessChat(chat.id,ownerId)).map(chat => chatIndexForUser(chat,ownerId)) : chatIndexCache.chats;
   }
+  const ids = options.ids ? JSON.stringify(options.ids) : null;
   const rows = ownerId
     ? db.prepare(
       `SELECT id, owner_id AS ownerId, created_at AS createdAt, updated_at AS updatedAt,
@@ -336,8 +337,9 @@ export function listChatsForUser(
            AND incognito = 0
            AND (automation_run_id IS NULL OR automation_run_id = '')
            AND (? = 1 OR archived = 0)
+           AND (? IS NULL OR id IN (SELECT value FROM json_each(?)))
          ORDER BY pinned DESC, COALESCE(last_message_sent, created_at) DESC`,
-      ).all(ownerId, ownerId, ownerId, options.includeArchived ? 1 : 0)
+      ).all(ownerId, ownerId, ownerId, options.includeArchived ? 1 : 0, ids, ids)
     : db.prepare(
       `SELECT id, owner_id AS ownerId, created_at AS createdAt, updated_at AS updatedAt,
                 last_message_sent AS lastMessageSent, title, keywords, agent_id AS agentId,
@@ -352,8 +354,9 @@ export function listChatsForUser(
          WHERE incognito = 0
            AND (automation_run_id IS NULL OR automation_run_id = '')
            AND (? = 1 OR archived = 0)
+           AND (? IS NULL OR id IN (SELECT value FROM json_each(?)))
          ORDER BY pinned DESC, COALESCE(last_message_sent, created_at) DESC`,
-      ).all(options.includeArchived ? 1 : 0);
+      ).all(options.includeArchived ? 1 : 0, ids, ids);
   const result: ChatIndexEntry[] = rows.flatMap((row) => {
       const item = row as Record<string, unknown>;
       const archived = Boolean(item.archived);
@@ -390,7 +393,7 @@ export function listChatsForUser(
     ...(typeof item.projectId === "string" && item.projectId ? { projectId: item.projectId } : {}),
       }];
     });
-  chatIndexCache = { key: cacheKey, expiresAt: Date.now() + 1_000, chats: result };
+  if (!options.ids) chatIndexCache = { key: cacheKey, expiresAt: Date.now() + 1_000, chats: result };
   return ownerId ? result.filter(chat => canAccessChat(chat.id,ownerId)).map(chat => chatIndexForUser(chat,ownerId)) : result;
 }
 

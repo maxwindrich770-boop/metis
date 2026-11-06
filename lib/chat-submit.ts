@@ -122,13 +122,16 @@ export async function submitChat(req: Request) {
     if (sendQueuedNow && !requestedMessageId) {
       return Response.json({ error: "Queued message ID is required" }, { status: 400 });
     }
-    if (sendQueuedNow && requestedMessageId) {
+    if (requestedMessageId) {
       const accepted = getJobForMessageId(chatId, requestedMessageId);
-      if (accepted) return Response.json({
-        jobId: accepted.id, runId: accepted.runId || accepted.id,
-        status: accepted.status, queueMessage: accepted.queueMessage,
-      }, { status: 202 });
-      if (chat.removedQueuedMessageIds?.includes(requestedMessageId)) {
+      if (accepted) {
+        if (accepted.userId !== ownerId) return Response.json({ error: "Message ID is already in use" }, { status: 409 });
+        return Response.json({
+          jobId: accepted.id, runId: accepted.runId || accepted.id,
+          status: accepted.status, queueMessage: accepted.queueMessage,
+        }, { status: 202 });
+      }
+      if (sendQueuedNow && chat.removedQueuedMessageIds?.includes(requestedMessageId)) {
         return Response.json({ error: "This queued message was removed" }, { status: 409 });
       }
     }

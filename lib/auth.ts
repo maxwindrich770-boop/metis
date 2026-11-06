@@ -42,6 +42,32 @@ function tokenHash(token: string) {
   return createHash("sha256").update(token).digest("hex");
 }
 
+function requestSessionToken(req: Request) {
+  return req.headers.get("cookie")?.split(";")
+    .map((part) => part.trim())
+    .find((part) => part.startsWith(`${CHAT_COOKIE}=`))
+    ?.slice(CHAT_COOKIE.length + 1);
+}
+
+export function getRequestSessionHash(req: Request) {
+  const token = requestSessionToken(req);
+  return token ? tokenHash(token) : null;
+}
+
+function userForSession(token?: string | null): User | null {
+  if (!token) return null;
+  const session = getDatabase().prepare(
+    `SELECT s.user_id as userId, s.expires_at as expiresAt,
+            u.id, u.username, u.password_hash as passwordHash, u.created_at as createdAt
+     FROM sessions s JOIN users u ON u.id = s.user_id WHERE s.token_hash = ?`,
+  ).get(tokenHash(token)) as (Session & User) | undefined;
+  return session && new Date(session.expiresAt).getTime() > Date.now() ? session : null;
+}
+
+export function getAuthenticatedCookieUser(req: Request) {
+  return userForSession(requestSessionToken(req));
+}
+
 function users() {
   return getDatabase()
     .prepare("SELECT id, username, password_hash as passwordHash, created_at as createdAt FROM users")
@@ -81,7 +107,6 @@ export async function isAuthenticated(req?: Request): Promise<boolean> {
 export async function getAuthenticatedUser(req?: Request): Promise<User | null> {
   const legacyPassword = req?.headers.get("x-chat-password");
   const legacyUser = req?.headers.get("x-chat-username")?.trim();
-  const migrated = users();
   if (
     process.env.CHAT_LEGACY_HEADER_AUTH === "true" &&
     legacyPassword &&
@@ -90,31 +115,14 @@ export async function getAuthenticatedUser(req?: Request): Promise<User | null> 
     // Off by default. The shared password plus a caller-chosen username is an
     // impersonation path; keep it only as an explicit migration bridge.
     if (!legacyUser) return null;
-    return migrated.find((user) => user.username === legacyUser) ?? null;
+    return users().find((user) => user.username === legacyUser) ?? null;
   }
-  const requestCookie = req?.headers.get("cookie")
-    ?.split(";")
-    .map((part) => part.trim())
-    .find((part) => part.startsWith(`${CHAT_COOKIE}=`))
-    ?.slice(CHAT_COOKIE.length + 1);
-  const token = req
-    ? requestCookie
-    : (await cookies())?.get(CHAT_COOKIE)?.value;
-  if (!token) return null;
-  const session = getDatabase().prepare(
-    `SELECT s.user_id as userId, s.expires_at as expiresAt,
-            u.id, u.username, u.password_hash as passwordHash, u.created_at as createdAt
-     FROM sessions s JOIN users u ON u.id = s.user_id WHERE s.token_hash = ?`,
-  ).get(tokenHash(token)) as (Session & User) | undefined;
-  return session && new Date(session.expiresAt).getTime() > Date.now() ? session : null;
+  return req ? getAuthenticatedCookieUser(req) : userForSession((await cookies())?.get(CHAT_COOKIE)?.value);
 }
 
 export function revokeRequestSession(req: Request) {
-  const token = req.headers.get("cookie")?.split(";")
-    .map((part) => part.trim())
-    .find((part) => part.startsWith(CHAT_COOKIE + "="))
-    ?.slice(CHAT_COOKIE.length + 1);
-  if (token) getDatabase().prepare("DELETE FROM sessions WHERE token_hash = ?").run(tokenHash(token));
+  const hash = getRequestSessionHash(req);
+  if (hash) getDatabase().prepare("DELETE FROM sessions WHERE token_hash = ?").run(hash);
 }
 
 export async function getAuthenticatedUserId(req?: Request): Promise<string | null> {
