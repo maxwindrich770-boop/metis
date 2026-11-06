@@ -3,8 +3,9 @@ import SwiftUI
 @main
 struct MetisApp: App {
     @UIApplicationDelegateAdaptor(MetisAppDelegate.self) private var appDelegate
+    @StateObject private var appLock = MetisAppLock.forApplication()
     var body: some Scene {
-        WindowGroup { RootView(push: appDelegate, watch: appDelegate.watch) }
+        WindowGroup { RootView(push: appDelegate, watch: appDelegate.watch, appLock: appLock) }
     }
 }
 
@@ -16,6 +17,7 @@ private struct RootView: View {
 
     @ObservedObject var push: MetisAppDelegate
     @ObservedObject var watch: WatchRelay
+    @ObservedObject var appLock: MetisAppLock
     @ObservedObject private var intentInbox = MetisIntentInbox.shared
     @Environment(\.scenePhase) private var scenePhase
     @AppStorage("metisServer") private var savedServer = ""
@@ -67,6 +69,17 @@ private struct RootView: View {
 
     var body: some View {
         content
+            .background(MetisAppLockWindow(lock: appLock))
+            .onChange(of: scenePhase, initial: true) { _, phase in
+                switch phase {
+                case .active:
+                    appLock.becomeActive()
+                    Task { await appLock.unlockAutomaticallyIfNeeded() }
+                case .inactive: appLock.resignActive()
+                case .background: appLock.enterBackground()
+                @unknown default: appLock.resignActive()
+                }
+            }
             .tint(MetisTheme.ink)
             .foregroundStyle(MetisTheme.ink)
             .task(id: scenePhase) {
@@ -106,7 +119,7 @@ private struct RootView: View {
                              unauthorized: { expire(client) })
                     .tabItem { Label("Projects", systemImage: "folder") }
                     .tag(Destination.projects)
-                ConnectionSettingsView(client: client, installationID: installationID,
+                ConnectionSettingsView(client: client, installationID: installationID, appLock: appLock,
                                        watchEnabled: $watchEnabled, pushEnabled: pushRegistered,
                                        showPush: { pushSettings = true },
                                        signOut: { Task { await signOut(client) } }, busy: busy,
@@ -605,7 +618,7 @@ private struct RootView: View {
     }
 
     private func iPhoneConnectionSettings(_ current: MetisAPI) -> some View {
-        ConnectionSettingsView(client: current, installationID: installationID,
+        ConnectionSettingsView(client: current, installationID: installationID, appLock: appLock,
                                watchEnabled: $watchEnabled, pushEnabled: pushRegistered,
                                showPush: { iPhonePushSettings = true },
                                signOut: { Task { await signOut(current) } }, busy: busy, status: notice,

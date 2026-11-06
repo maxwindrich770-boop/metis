@@ -423,6 +423,7 @@ private struct ConnectionSettingsSurface: ViewModifier {
 struct ConnectionSettingsView: View {
     let client: MetisAPI
     let installationID: String
+    @ObservedObject var appLock: MetisAppLock
     @Binding var watchEnabled: Bool
     let pushEnabled: Bool
     let showPush: () -> Void
@@ -472,6 +473,7 @@ struct ConnectionSettingsView: View {
                         }
                     }
                 }
+                MetisAppLockSettings(lock: appLock)
                 Section("Privacy and permissions") {
                     Toggle("Allow Apple Watch access", isOn: $watchEnabled)
                     Button(action: showPush) {

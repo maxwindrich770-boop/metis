@@ -21,6 +21,12 @@ authoritative; unavailable options are not invented by the iPhone client.
 
 Open the chat sidebar's **iPhone controls** entry for **iPhone settings**,
 native Watch/push access, connection details, sign-out and reload/back/forward.
+Under **App protection**, opt in to **Protect Metis with Face ID** or **Touch ID**.
+The name comes from LocalAuthentication discovery. Enabling requires biometrics;
+unlocking and disabling support the system's device-passcode fallback. Backgrounding
+locks the app, and a scene window also covers open sheets and app-switcher snapshots.
+Cancelled authentication keeps the app covered. Drafts remain mounted while locked.
+The optional local preference survives restart; it starts disabled on a new install.
 These actions appear in an on-demand native sheet; there is no permanent bottom
 bar. On same-origin pages without the sidebar, a compact native fallback keeps
 the actions reachable. The Web workspace fills the available height through
@@ -210,6 +216,10 @@ swiftc clients/apple/MetisiOS/MetisWebWorkspace.swift \
   clients/apple/Tests/WebWorkspacePolicySmoke.swift -o /tmp/metis-web-policy-smoke
 /tmp/metis-web-policy-smoke
 
+swiftc -parse-as-library clients/apple/MetisiOS/MetisAppLock.swift \
+  clients/apple/Tests/AppLockSmoke.swift -o /tmp/metis-app-lock-smoke
+/tmp/metis-app-lock-smoke
+
 # Use a fresh fixture/database for the API smoke test, separate from UI tests.
 node --import tsx clients/apple/Tests/fixture-server.ts 43102
 # In another terminal:
@@ -218,6 +228,12 @@ swiftc -D DEBUG -parse-as-library clients/apple/MetisiOS/MetisAPI.swift \
 /tmp/metis-apple-api-smoke http://localhost:43102
 
 ```
+
+App-lock UI tests use an explicit Debug Simulator-only biometric fixture with
+a labelled synthetic confirmation dialog. They cover the detected Face ID/Touch ID
+labels, unavailable devices, cancellation, coverage of native sheets, restart,
+authenticated disable and retained Web drafts. They do not prove a real biometric
+match or physical Touch ID operation. The fixture is excluded from device builds.
 
 The default Web XCUITests exercise native login, HttpOnly authentication,
 a persisted server action, app restart, cookie rotation, logout, downloads,

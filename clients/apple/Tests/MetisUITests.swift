@@ -961,6 +961,119 @@ final class MetisUITests: XCTestCase {
     }
 
     @MainActor
+    func testSyntheticFaceIDAppLockCoversSettingsPreservesDraftAndRestoresLocked() throws {
+        let app = launch(additionalArguments: ["-metis.app-lock-fixture", "faceID", "-metis.app-lock-reset"])
+        signIn(app, server: "http://localhost:43100")
+        let web = openSyntheticViewportFixture(in: app)
+        let composer = web.descendants(matching: .any)["Synthetic viewport draft"].firstMatch
+        composer.tap()
+        composer.typeText("Draft protected across app lock")
+        web.buttons["Dismiss keyboard, keep composer focus"].tap()
+        openAppLockSettings(in: app, web: web)
+        let toggle = app.switches["metis.appLock.toggle"]
+        XCTAssertTrue(toggle.waitForExistence(timeout: 5))
+        XCTAssertTrue(toggle.label.contains("Face ID"))
+        XCTAssertFalse(toggle.label.contains("Touch ID"))
+        toggle.switches.firstMatch.tap()
+        respondToSyntheticAuthentication(in: app, accept: true)
+        awaitAppLockToggle("1", in: app)
+
+        XCUIDevice.shared.press(.home)
+        app.activate()
+        respondToSyntheticAuthentication(in: app, accept: false)
+        XCTAssertTrue(app.staticTexts["metis.appLock.cover"].waitForExistence(timeout: 5))
+        XCTAssertFalse(app.navigationBars["iPhone settings"].isHittable,
+                       "The cover must block a previously presented native settings sheet")
+        XCTAssertFalse(composer.isHittable)
+        capture(app, named: "synthetic-biometric-fixture-locked-settings-covered")
+        app.buttons["metis.appLock.unlock"].tap()
+        respondToSyntheticAuthentication(in: app, accept: true)
+        XCTAssertTrue(app.navigationBars["iPhone settings"].waitForExistence(timeout: 5))
+        awaitAppLockToggle("1", in: app)
+        app.buttons["metis.iPhoneSettingsDone"].tap()
+        XCTAssertEqual(composer.value as? String, "Draft protected across app lock")
+
+        app.terminate()
+        app.launchArguments = ["-AppleLanguages", "(en)", "-AppleLocale", "en_US", "-metis.app-lock-fixture", "faceID"]
+        app.launch()
+        respondToSyntheticAuthentication(in: app, accept: false)
+        XCTAssertTrue(app.staticTexts["metis.appLock.cover"].waitForExistence(timeout: 5),
+                      "A persisted lock must cover the app on a fresh process launch")
+        app.buttons["metis.appLock.unlock"].tap()
+        respondToSyntheticAuthentication(in: app, accept: true)
+        let restoredWeb = authenticatedWebWorkspace(in: app)
+        openAppLockSettings(in: app, web: restoredWeb)
+        awaitAppLockToggle("1", in: app)
+        app.switches["metis.appLock.toggle"].switches.firstMatch.tap()
+        respondToSyntheticAuthentication(in: app, accept: false)
+        awaitAppLockToggle("1", in: app)
+        app.switches["metis.appLock.toggle"].switches.firstMatch.tap()
+        respondToSyntheticAuthentication(in: app, accept: true)
+        awaitAppLockToggle("0", in: app)
+        capture(app, named: "synthetic-biometric-fixture-face-id-setting")
+        XCUIDevice.shared.press(.home)
+        app.activate()
+        XCTAssertTrue(app.navigationBars["iPhone settings"].waitForExistence(timeout: 5))
+        XCTAssertFalse(app.staticTexts["metis.appLock.cover"].exists)
+    }
+
+    @MainActor
+    func testSyntheticTouchIDAppLockSettingsUseOnlyTouchID() {
+        let app = launch(additionalArguments: ["-metis.app-lock-fixture", "touchID", "-metis.app-lock-reset"])
+        signIn(app, server: "http://localhost:43100")
+        let web = authenticatedWebWorkspace(in: app)
+        openAppLockSettings(in: app, web: web)
+        let toggle = app.switches["metis.appLock.toggle"]
+        XCTAssertTrue(toggle.waitForExistence(timeout: 5))
+        XCTAssertTrue(toggle.label.contains("Touch ID"))
+        XCTAssertFalse(toggle.label.contains("Face ID"))
+        capture(app, named: "synthetic-biometric-fixture-touch-id-setting")
+    }
+
+    @MainActor
+    func testSyntheticAppLockWithoutBiometricsShowsUnavailable() {
+        let app = launch(additionalArguments: ["-metis.app-lock-fixture", "unavailable", "-metis.app-lock-reset"])
+        signIn(app, server: "http://localhost:43100")
+        let web = authenticatedWebWorkspace(in: app)
+        openAppLockSettings(in: app, web: web)
+        XCTAssertTrue(app.descendants(matching: .any)["metis.appLock.unavailable"].firstMatch.waitForExistence(timeout: 5))
+        XCTAssertFalse(app.switches["metis.appLock.toggle"].exists)
+    }
+
+    @MainActor
+    private func openAppLockSettings(in app: XCUIApplication, web: XCUIElement) {
+        let fallback = app.buttons["metis.appControlsFallback"]
+        if fallback.waitForExistence(timeout: 2) { fallback.tap() }
+        else { openIPhoneControls(in: app, web: web) }
+        let settings = app.buttons["metis.iPhoneSettings"]
+        revealInControls(settings, in: app)
+        settings.tap()
+        XCTAssertTrue(app.navigationBars["iPhone settings"].waitForExistence(timeout: 10))
+        let section = app.switches["metis.appLock.toggle"]
+        if section.waitForExistence(timeout: 2), !section.isHittable {
+            app.swipeUp()
+        }
+    }
+
+    @MainActor
+    private func respondToSyntheticAuthentication(in app: XCUIApplication, accept: Bool) {
+        let prompt = app.alerts["SYNTHETIC biometric verification"]
+        guard prompt.waitForExistence(timeout: 10) else {
+            capture(app, named: "synthetic-app-lock-authentication-missing")
+            XCTFail("Missing explicitly simulated authentication: " + app.debugDescription)
+            return
+        }
+        prompt.buttons[accept ? "Approve synthetic authentication" : "Cancel synthetic authentication"].tap()
+    }
+
+    @MainActor
+    private func awaitAppLockToggle(_ value: String, in app: XCUIApplication) {
+        let toggle = app.switches["metis.appLock.toggle"]
+        let expected = XCTNSPredicateExpectation(predicate: NSPredicate(format: "value == %@", value), object: toggle)
+        XCTAssertEqual(XCTWaiter.wait(for: [expected], timeout: 8), .completed)
+    }
+
+    @MainActor
     func testIPhoneControlsRemainReachableWithoutSidebar() {
         let app = launch()
         signIn(app, server: "http://localhost:43100")
