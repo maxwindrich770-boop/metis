@@ -85,6 +85,13 @@ its account appearance settings. It is not a separately restyled Swift copy
 of the website. Native device sheets use the device's light/dark appearance. App controls use
 Liquid Glass on iOS 26+, with material controls on older supported iOS releases
 and opaque controls for reduced-transparency or increased-contrast preferences.
+Mobile drawer selections for New chat, Notebooks and Automations reuse the
+existing close action after navigation. Search, account controls, project
+expanders, New agent and desktop navigation retain their existing behavior.
+The drawer and its account/settings footer keep full-window geometry while
+search opens the input surface; the keyboard covers the footer. Search uses
+readable text without focus zoom, a stable phone-dialog top and a results list
+bounded by the visible space so its final result remains reachable.
 The trusted Web workspace receives app-only translucent header/composer/sidebar
 surfaces using the server's existing color tokens. Server features, parameters
 and account state remain authoritative.

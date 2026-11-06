@@ -44,6 +44,7 @@ function webWorkspaceFixture(username: string, cookieName: string, externalAddre
     <a href="/?fixture=viewport-empty-flow">Open synthetic empty composer flow fixture</a>
     <a href="/?fixture=viewport-empty-large">Open synthetic large empty composer fixture</a>
     <a href="/?fixture=viewport-tall">Open synthetic tall composer transcript fixture</a>
+    <a href="/?fixture=sidebar">Open synthetic sidebar fixture</a>
     <a href="/?fixture=model-preferences">Open synthetic model preference storage fixture</a>
     <p id="error" role="alert"></p>
   </main>
@@ -115,6 +116,178 @@ function webWorkspaceFixture(username: string, cookieName: string, externalAddre
 </html>`;
 }
 
+
+// Dedicated, authenticated synthetic drawer fixture; no notebooks or automations are mutated.
+function webSidebarFixture(username: string) {
+  const expectedUsername = JSON.stringify(username).replaceAll("<", "\\u003c");
+  return `<!doctype html><html lang="en"><head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<title>SYNTHETIC sidebar navigation fixture — not Metis design</title>
+<style>
+:root{--background:#f6f4ee;--foreground:#20231e;--popover:#fffdf8;--muted:#e1e2da}
+*{box-sizing:border-box}html,body{margin:0;height:100%;overflow:hidden;font:17px system-ui;background:var(--background);color:var(--foreground)}
+[hidden]{display:none!important}button,input{font:inherit}button{min-height:44px;border:1px solid #989b90;border-radius:10px;padding:8px 12px;color:inherit;background:var(--popover)}
+.metis-shell{height:100dvh;overflow:hidden;padding:12px}header{display:flex;gap:8px;align-items:center;min-height:56px}
+main{padding:12px;overflow:auto;height:calc(100% - 56px)}h1{font-size:22px}#sidebar-state{font-size:10px;overflow-wrap:anywhere}
+#sidebar-close-overlay{position:fixed;inset:0;z-index:10;background:#0002;opacity:0;pointer-events:none;border:0}
+aside[aria-label="Chats sidebar"]{position:fixed;inset:0 auto 0 0;z-index:20;width:min(320px,calc(100vw - 44px));background:var(--popover);border-right:1px solid #999}
+.visible{visibility:visible;transform:translateX(0)}.invisible{visibility:hidden;transform:translateX(-100%)}
+.sidebar-inner{height:100%;display:flex;flex-direction:column;overflow:hidden}.brand{padding:24px 12px 8px;flex:none}
+.sidebar-nav{padding:12px 8px 4px;flex:none}.sidebar-nav>button{display:flex;width:100%;gap:8px;text-align:left;border:0;font-size:13px;padding:8px 10px}
+.sidebar-nav span{flex:1}kbd{font-size:10px}.sidebar-nav kbd{display:none}.metis-sidebar-scroll{flex:1;min-height:0;overflow:auto;padding:8px}
+.metis-sidebar-scroll>button{display:block;width:100%;margin:4px 0;font-size:12px}.sidebar-footer{position:relative;flex:none;padding:8px}
+#sidebar-account{width:100%;min-height:48px;text-align:left}#fixture-account-menu{position:absolute;bottom:100%;left:8px;right:8px;padding:8px;border:1px solid #777;background:var(--popover);z-index:25}
+.sidebar-search-dialog{position:fixed;z-index:50;top:14dvh;left:50%;transform:translateX(-50%);width:calc(100% - 24px);max-width:560px;background:var(--popover);border:1px solid #777;border-radius:14px;padding:12px}
+.search-row{display:flex;gap:8px}#sidebar-search-input{width:100%;min-width:0;height:48px;border:1px solid #777;border-radius:8px;padding:8px}
+.search-row input{font-size:14px}
+#palette-results{max-height:min(60vh,420px);overflow:auto;padding:8px}#search-state{font:10px/12px system-ui;overflow:hidden;height:84px;overflow-wrap:anywhere}
+#safe-bottom-probe{position:fixed;width:0;height:env(safe-area-inset-bottom);visibility:hidden;pointer-events:none}
+</style></head><body>
+<div class="metis-shell">
+<header><button id="sidebar-open" aria-label="Open sidebar" aria-expanded="false">Chats</button><strong>SYNTHETIC sidebar fixture</strong></header>
+<main><h1 id="destination">Synthetic destination: New chat</h1><p id="session-state">Checking synthetic sidebar session…</p><p id="sidebar-state" role="status"></p><p id="fixture-error" role="alert"></p><p>No composer is rendered here: Notebooks and Automations keep their normal page layout.</p></main>
+<div class="mobile-sidebar-wrapper">
+<button id="sidebar-close-overlay" aria-label="Close sidebar" tabindex="-1"></button>
+<aside class="fixed inset-y-0 left-0 invisible" aria-label="Chats sidebar">
+<div class="sidebar-inner">
+<div class="brand" aria-label="Metis">SYNTHETIC Metis brand</div>
+<div class="sidebar-nav">
+<button id="nav-new" type="button"><span>New chat</span></button>
+<button id="nav-search" type="button"><span>Search chats</span><kbd>⌘K</kbd></button>
+<button id="nav-notebooks" type="button"><span>Notebooks</span></button>
+<button id="nav-automations" type="button"><span>Automations</span></button>
+</div>
+<div class="metis-sidebar-scroll">
+<button id="project-expand" aria-label="Expand synthetic project"><span>Automations</span></button>
+<button id="programmatic-nav">Programmatically select New chat</button>
+<button id="agent-mode">Use synthetic agent destination</button>
+</div>
+<div id="sidebar-footer" class="sidebar-footer">
+<div id="fixture-account-menu" role="menu" hidden><button id="account-settings" role="menuitem">Settings</button></div>
+<button id="sidebar-account" aria-label="Open account menu" aria-controls="fixture-account-menu">Fixture account settings</button>
+</div></div></aside>
+</div>
+<div id="search-dialog" class="sidebar-search-dialog" data-slot="dialog-content" role="dialog" aria-label="Search chats and commands" hidden>
+<div class="search-row"><input id="sidebar-search-input" role="combobox" aria-controls="palette-results" aria-label="Search chats or commands" placeholder="Search chats or run a command…" autocomplete="off"><button id="search-close" aria-label="Close search">Close</button></div>
+<div id="palette-results" role="listbox" aria-label="Search results"><p>Synthetic search results and commands</p><p id="search-state" role="status"></p><p>Additional synthetic result 1</p><p>Additional synthetic result 2</p><p>Additional synthetic result 3</p><p>Additional synthetic result 4</p><p>Additional synthetic result 5</p><p>Additional synthetic result 6</p><p>Additional synthetic result 7</p><p>Additional synthetic result 8</p><p>Additional synthetic result 9</p><p>Additional synthetic result 10</p><p>Additional synthetic result 11</p><p>Additional synthetic result 12</p><button id="last-search-result">Open synthetic last search result</button></div>
+</div>
+</div><div id="safe-bottom-probe" aria-hidden="true"></div>
+<script>
+    const expectedUsername = ${expectedUsername};
+    const el = id => document.getElementById(id);
+    const sidebar = document.querySelector("aside[aria-label='Chats sidebar']");
+    const overlay = el("sidebar-close-overlay");
+    const dialog = el("search-dialog");
+    const search = el("sidebar-search-input");
+    const pageInstance = crypto.randomUUID();
+    let activeDestination = "New chat", closeCount = 0, selectionCount = 0;
+    let projectExpanded = false, agentMode = false, accountMenuOpen = false;
+    let transition = null, transitionRevision = 0, verification = false;
+    function sidebarOpen() { return sidebar.classList.contains("visible"); }
+    function measure() {
+      const box = sidebar.getBoundingClientRect(), footer = el("sidebar-footer").getBoundingClientRect();
+      const account = el("sidebar-account").getBoundingClientRect();
+      const controls = sidebar.querySelector("[data-metis-app-controls]")?.getBoundingClientRect();
+      return { sidebarTop: box.top, sidebarHeight: box.height, sidebarBottom: box.bottom,
+        footerTop: footer.top, footerBottom: footer.bottom, accountTop: account.top,
+        settingsTop: controls?.top ?? null, safeBottom: parseFloat(getComputedStyle(el("safe-bottom-probe")).height) || 0,
+        windowHeight: parseFloat(getComputedStyle(document.documentElement).getPropertyValue("--metis-app-window-height")) || innerHeight,
+        viewportHeight: innerHeight, width: innerWidth, documentScrollY: scrollY,
+        viewportScale: visualViewport?.scale || 1, searchFontSize: parseFloat(getComputedStyle(search).fontSize),
+        dialogTop: dialog.hidden ? null : dialog.getBoundingClientRect().top,
+        resultsTop: el("palette-results").getBoundingClientRect().top, resultsHeight: el("palette-results").getBoundingClientRect().height };
+    }
+    function report() {
+      const state = { pageInstance, activeDestination, sidebarOpen: sidebarOpen(), closeCount, selectionCount,
+        projectExpanded, agentMode, accountMenuOpen, searchOpen: !dialog.hidden, query: search.value,
+        authenticated: verification, metrics: measure(), transition };
+      el("sidebar-state").textContent = "Synthetic sidebar state: " + JSON.stringify(state);
+      el("search-state").textContent = "Synthetic sidebar search state: " + JSON.stringify(state);
+    }
+    function setSidebar(open) {
+      sidebar.classList.toggle("visible", open);
+      sidebar.classList.toggle("invisible", !open);
+      overlay.tabIndex = open ? 0 : -1;
+      overlay.style.pointerEvents = open ? "auto" : "none";
+      overlay.style.opacity = open ? "1" : "0";
+      el("sidebar-open").setAttribute("aria-expanded", String(open));
+      report();
+    }
+    function select(destination) {
+      if (destination === "New chat" && agentMode) {
+        el("destination").textContent = "Synthetic new-agent dialog opened";
+      } else {
+        activeDestination = destination; selectionCount++;
+        el("destination").textContent = "Synthetic destination: " + destination;
+      }
+      // Intentionally retain the server bug: the page switches, but this handler
+      // never closes the mobile drawer. The app must invoke the existing close control.
+      report();
+    }
+    el("nav-new").addEventListener("click", () => select("New chat"));
+    el("nav-notebooks").addEventListener("click", () => select("Notebooks"));
+    el("nav-automations").addEventListener("click", () => select("Automations"));
+    el("sidebar-open").addEventListener("click", () => setSidebar(true));
+    overlay.addEventListener("click", () => { closeCount++; setSidebar(false); });
+    el("project-expand").addEventListener("click", () => { projectExpanded = !projectExpanded; report(); });
+    el("programmatic-nav").addEventListener("click", () => el("nav-new").click());
+    el("agent-mode").addEventListener("click", () => {
+      agentMode = !agentMode;
+      el("nav-new").querySelector("span").textContent = agentMode ? "New agent" : "New chat";
+      report();
+    });
+    el("sidebar-account").addEventListener("click", () => {
+      accountMenuOpen = !accountMenuOpen; el("fixture-account-menu").hidden = !accountMenuOpen; report();
+    });
+    el("account-settings").addEventListener("click", () => {
+      el("destination").textContent = "Synthetic settings selected"; report();
+    });
+    let sampleRevision = 0;
+    function sampleSearch(phase) {
+      const revision = ++sampleRevision, started = performance.now(), samples = [];
+      const initial = measure();
+      function sample(now) {
+        if (revision !== sampleRevision) return;
+        samples.push(measure());
+        if (now - started < 900 || samples.length < 18) { requestAnimationFrame(sample); return; }
+        const range = key => {
+          const values = samples.map(item => item[key]).filter(value => value != null);
+          return values.length ? Math.max(...values) - Math.min(...values) : 0;
+        };
+        transition = { revision: ++transitionRevision, phase, frames: samples.length, duration: now - started,
+          initial, final: measure(), sidebarTopRange: range("sidebarTop"), sidebarHeightRange: range("sidebarHeight"),
+          footerTopRange: range("footerTop"), accountTopRange: range("accountTop"), settingsTopRange: range("settingsTop"),
+          documentScrollRange: range("documentScrollY"), scaleRange: range("viewportScale"), dialogTopRange: range("dialogTop") };
+        report();
+      }
+      sample(started);
+    }
+    el("nav-search").addEventListener("click", () => {
+      dialog.hidden = false;
+      sampleSearch("open");
+      report();
+      setTimeout(() => search.focus({ preventScroll: true }), 0);
+    });
+    search.addEventListener("blur", () => { if (!dialog.hidden) sampleSearch("close"); });
+    search.addEventListener("input", report);
+    el("search-close").addEventListener("click", () => {
+      search.blur(); dialog.hidden = true; report();
+    });
+    el("last-search-result").addEventListener("click", () => {
+      activeDestination = "Search result"; selectionCount++;
+      el("destination").textContent = "Synthetic destination: Search result";
+      search.blur(); dialog.hidden = true; setSidebar(false); report();
+    });
+    for (const event of ["resize", "scroll"]) window.visualViewport?.addEventListener(event, report);
+    window.addEventListener("resize", report);
+    document.addEventListener("metis-native-layout", report);
+    fetch("/api/mobile/session", { credentials: "same-origin" }).then(async response => {
+      if (!response.ok || (await response.json()).username !== expectedUsername) throw new Error("Unexpected sidebar fixture session");
+      verification = true; el("session-state").textContent = "Authenticated sidebar fixture session"; report();
+    }).catch(error => { el("fixture-error").textContent = String(error.message || error); });
+    setSidebar(false);
+</script></body></html>`;
+}
 
 // Storage plumbing only. These values deliberately do not identify a model or
 // imply provider capabilities; the production web UI validates its own catalog.
@@ -777,6 +950,7 @@ async function main() {
         const fixture = url.searchParams.get("fixture");
         const html = account && (fixture === "viewport" || fixture === "composer-zoom" || fixture === "viewport-empty" || fixture === "viewport-empty-flow" || fixture === "viewport-tall" || fixture === "viewport-empty-large"
           ? webViewportFixture(account.username, fixture === "composer-zoom", fixture === "viewport-empty", fixture === "viewport-empty-flow" || fixture === "viewport-empty-large", fixture === "viewport-tall", fixture === "viewport-empty-large")
+          : fixture === "sidebar" ? webSidebarFixture(account.username)
           : fixture === "model-preferences" ? webModelPreferenceFixture()
           : fixture === "app-controls-subframe" ? webAppControlsSubframeFixture()
           : webWorkspaceFixture(account.username, CHAT_COOKIE, externalAddress));

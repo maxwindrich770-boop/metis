@@ -380,7 +380,9 @@ enum MetisAppWebPresentation {
         /* The web view fills the screen. In-flow content owns one status-bar
            inset; fixed overlays paint behind it and inset their controls below. */
         html[data-metis-native-app="ios"]:has([data-metis-app-composer-dock]),
-        html[data-metis-native-app="ios"]:has([data-metis-app-composer-dock]) body {
+        html[data-metis-native-app="ios"]:has([data-metis-app-composer-dock]) body,
+        html[data-metis-native-app="ios"]:has(aside[aria-label="Chats sidebar"].visible:not([hidden])),
+        html[data-metis-native-app="ios"]:has(aside[aria-label="Chats sidebar"].visible:not([hidden])) body {
           height: 100%;
           overflow: clip;
         }
@@ -424,6 +426,8 @@ enum MetisAppWebPresentation {
           box-shadow: inset -1px 0 0 var(--metis-app-edge);
           box-sizing: border-box;
           padding-top: env(safe-area-inset-top);
+          height: var(--metis-app-window-height, 100dvh);
+          bottom: auto;
         }
         /* Match the content gutters inside the system-safe area. */
         html[data-metis-native-app="ios"] aside[aria-label="Chats sidebar"] [aria-label="Metis"]:not([role="img"]) {
@@ -431,7 +435,7 @@ enum MetisAppWebPresentation {
           padding-bottom: var(--metis-app-sidebar-gutter);
         }
         html[data-metis-native-app="ios"] [data-metis-app-sidebar-footer] {
-          padding-bottom: calc(var(--metis-app-sidebar-gutter) + env(safe-area-inset-bottom));
+          padding-bottom: calc(var(--metis-app-sidebar-gutter) + var(--metis-app-home-inset, env(safe-area-inset-bottom)));
         }
         html[data-metis-native-app="ios"] [data-metis-app-account-menu],
         html[data-metis-native-app="ios"] [data-metis-app-settings-surface] {
@@ -446,8 +450,19 @@ enum MetisAppWebPresentation {
           margin: 8px;
           overflow: hidden;
         }
-        /* The live composer is 15px. A readable minimum prevents WebKit's
-           focus zoom without constraining deliberate pinch or text scaling. */
+        html[data-metis-native-app="ios"] input[role="combobox"][aria-controls="palette-results"] {
+          font-size: max(16px, 1rem);
+        }
+        @media (max-width: 639px) {
+          html[data-metis-native-app="ios"] [data-slot="dialog-content"]:has(input[aria-controls="palette-results"]) {
+            top: calc(var(--metis-app-window-height, 100dvh) * 0.14) !important;
+          }
+          html[data-metis-native-app="ios"] [data-slot="dialog-content"]:has(input[aria-controls="palette-results"]) #palette-results {
+            max-height: max(0px, min(60dvh, 420px, calc(100dvh - var(--metis-app-window-height, 100dvh) * 0.14 - 4rem)));
+          }
+        }
+        /* A readable minimum prevents WebKit's focus zoom without
+           constraining deliberate pinch or text scaling. */
         html[data-metis-native-app="ios"] .composer-input-area,
         html[data-metis-native-app="ios"] .composer-input-area textarea,
         html[data-metis-native-app="ios"] .composer-input-area [contenteditable="true"] {
@@ -698,6 +713,24 @@ enum MetisAppWebPresentation {
       };
 
       document.addEventListener('click', event => {
+        if (!event.isTrusted || !(event.target instanceof Element)) return;
+        const button = event.target.closest('button');
+        const sidebar = button?.closest('aside[aria-label="Chats sidebar"]');
+        const navigation = sidebar?.querySelector('.metis-sidebar-scroll')?.previousElementSibling;
+        const destination = button?.querySelector(':scope > span')?.textContent.trim();
+        if (!sidebar || !navigation || button.parentElement !== navigation ||
+            button.disabled || !['New chat', 'Notebooks', 'Automations'].includes(destination)) return;
+        // Defer until the original navigation handler and its cancellation state
+        // have completed. Reuse the existing mobile close action.
+        setTimeout(() => {
+          if (event.defaultPrevented || !sidebar.isConnected) return;
+          const close = Array.from(sidebar.parentElement?.children || [])
+            .find(element => element.matches('button[aria-label="Close sidebar"]'));
+          if (close && close.tabIndex >= 0) close.click();
+        }, 0);
+      }, true);
+
+      document.addEventListener('click', event => {
         const target = event.target instanceof Element
           ? event.target.closest('[data-metis-app-controls]') : null;
         if (!target || !event.isTrusted) return;
@@ -755,7 +788,7 @@ private final class WorkspaceWebContainer: UIView {
     private var viewportFocusScrollFrames = 0
     private var keyboardTransitionUntil: CFTimeInterval = 0
     private var publishedWindowSize: CGSize = .zero
-    private var nativeChatLayoutActive = false
+    private var nativeFullWindowLayoutActive = false
     #if DEBUG && targetEnvironment(simulator)
     private let syntheticInputOcclusion: UILabel? = {
         guard ProcessInfo.processInfo.arguments.contains("-metis.synthetic-input-occlusion") else { return nil }
@@ -799,7 +832,7 @@ private final class WorkspaceWebContainer: UIView {
         viewportScrollObservations = [
             webView.observe(\.isLoading, options: [.new]) { [weak self] view, _ in
                 MainActor.assumeIsolated {
-                    if view.isLoading { self?.nativeChatLayoutActive = false }
+                    if view.isLoading { self?.nativeFullWindowLayoutActive = false }
                     else { self?.publishWindowGeometry(force: true) }
                 }
             },
@@ -880,10 +913,16 @@ private final class WorkspaceWebContainer: UIView {
           document.documentElement?.style.setProperty('--metis-app-window-height', '\(height)px');
           document.documentElement?.style.setProperty('--metis-app-home-inset', '\(homeInset)px');
           document.dispatchEvent(new Event('metis-native-layout'));
-          Boolean(document.querySelector('html[data-metis-native-app="ios"] .metis-shell [data-metis-app-composer-dock]'));
+          (() => {
+            if (document.querySelector('html[data-metis-native-app="ios"] .metis-shell [data-metis-app-composer-dock]')) return true;
+            const sidebar = document.querySelector('html[data-metis-native-app="ios"] aside[aria-label="Chats sidebar"]');
+            if (!sidebar || getComputedStyle(sidebar).visibility === 'hidden') return false;
+            const rect = sidebar.getBoundingClientRect();
+            return rect.width > 0 && rect.right > 0 && rect.left < innerWidth;
+          })();
           """) { [weak self] value, _ in
             guard let self, self.webView.url == page, !self.webView.isLoading else { return }
-            self.nativeChatLayoutActive = value as? Bool == true
+            self.nativeFullWindowLayoutActive = value as? Bool == true
             self.reconcileViewportFocusScroll()
         }
     }
@@ -898,13 +937,13 @@ private final class WorkspaceWebContainer: UIView {
             finishViewportFocusScroll()
             return
         }
-        // A clipped chat shell may retain the full window height while its
-        // visible viewport is shorter. It still has no legitimate root scroll
+        // A clipped chat shell or visible mobile drawer retains the full window
+        // height while its visible viewport is shorter, with no legitimate root scroll
         // range. Other pages must fit the visible viewport; longer documents,
         // custom insets, and deliberate zoom retain WebKit behavior.
         guard scroll.contentInset == .zero, scroll.adjustedContentInset == .zero,
               scroll.contentSize.width <= scroll.bounds.width + 0.5,
-              scroll.contentSize.height <= (nativeChatLayoutActive ? publishedWindowSize.height : scroll.bounds.height) + 0.5 else { return }
+              scroll.contentSize.height <= (nativeFullWindowLayoutActive ? publishedWindowSize.height : scroll.bounds.height) + 0.5 else { return }
         correctingViewportFocusScroll = true
         UIView.performWithoutAnimation {
             if scroll.contentOffset != .zero {

@@ -1257,6 +1257,256 @@ final class MetisUITests: XCTestCase {
         XCTAssertTrue(web.staticTexts["Synthetic transcript anchor row"].isHittable, app.debugDescription)
     }
 
+
+    @MainActor
+    func testSyntheticSidebarDestinationsCloseDrawerWithoutExtraTap() throws {
+        let app = launch()
+        signIn(app, server: "http://localhost:43100")
+        let web = try openSyntheticSidebarFixture(in: app)
+        var expectedCloses = 0
+        for destination in ["Notebooks", "Automations", "New chat", "Notebooks"] {
+            web.buttons["Open sidebar"].tap()
+            XCTAssertTrue(try sidebarState(in: web).sidebarOpen)
+            web.buttons[destination].tap()
+            XCTAssertTrue(web.staticTexts["Synthetic destination: " + destination].waitForExistence(timeout: 5))
+            expectedCloses += 1
+            let closed = XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in
+                guard let state = try? self.sidebarState(in: web) else { return false }
+                return !state.sidebarOpen && state.closeCount == expectedCloses
+            }, object: web)
+            XCTAssertEqual(XCTWaiter.wait(for: [closed], timeout: 5), .completed,
+                           "The same destination gesture must select the page and close the mobile drawer")
+        }
+        web.buttons["Open sidebar"].tap()
+        web.buttons["Expand synthetic project"].tap()
+        XCTAssertTrue(try sidebarState(in: web).projectExpanded)
+        XCTAssertTrue(try sidebarState(in: web).sidebarOpen,
+                      "A project-row expander is not a top-level destination")
+        web.buttons["Programmatically select New chat"].tap()
+        XCTAssertEqual(try sidebarState(in: web).activeDestination, "New chat")
+        XCTAssertTrue(try sidebarState(in: web).sidebarOpen,
+                      "Synthetic, untrusted navigation must not trigger the native drawer hook")
+        web.buttons["Use synthetic agent destination"].tap()
+        web.buttons["New agent"].tap()
+        XCTAssertTrue(try sidebarState(in: web).sidebarOpen,
+                      "New agent opens its own flow and is excluded from this navigation change")
+        web.buttons["Open account menu"].tap()
+        XCTAssertTrue(try sidebarState(in: web).accountMenuOpen)
+        XCTAssertTrue(try sidebarState(in: web).sidebarOpen,
+                      "Account/settings controls must not close the sidebar")
+        XCTAssertEqual(try sidebarState(in: web).closeCount, expectedCloses)
+        capture(app, named: "synthetic-sidebar-destination-and-exclusion-checks")
+    }
+
+    @MainActor
+    func testSyntheticSidebarSearchKeepsDrawerAndSettingsBehindInputSurface() throws {
+        let app = launch(additionalArguments: ["-metis.synthetic-input-occlusion"])
+        signIn(app, server: "http://localhost:43100")
+        let web = try openSyntheticSidebarFixture(in: app)
+        web.buttons["Open sidebar"].tap()
+        web.buttons["Notebooks"].tap()
+        XCTAssertTrue(web.staticTexts["Synthetic destination: Notebooks"].waitForExistence(timeout: 5))
+        // Navigation auto-close is covered separately. Make the geometry setup
+        // independent so this test can also reproduce the search bug on old builds.
+        if try sidebarState(in: web).sidebarOpen { web.buttons["Close sidebar"].tap() }
+        web.buttons["Open sidebar"].tap()
+        let before = try sidebarState(in: web)
+        let instance = before.pageInstance
+        let geometryBefore = try XCTUnwrap(observedWindowGeometry(in: app))
+        XCTAssertEqual(before.metrics.sidebarTop, 0, accuracy: 2)
+        XCTAssertEqual(before.metrics.sidebarHeight, Double(geometryBefore.window.height), accuracy: 2)
+
+        web.buttons["Search chats"].tap()
+        let input = web.textFields["Search chats or commands"]
+        XCTAssertTrue(input.waitForExistence(timeout: 5))
+        input.tap()
+        input.typeText("sidebar query")
+        XCTAssertTrue(app.descendants(matching: .any)["metis.syntheticInputOcclusion"].firstMatch.waitForExistence(timeout: 5))
+        let raised = XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in
+            guard let g = self.observedWindowGeometry(in: app) else { return false }
+            return g.window.maxY - g.availableBottom >= 300 && abs(g.web.maxY - g.availableBottom) <= 2
+        }, object: app)
+        XCTAssertEqual(XCTWaiter.wait(for: [raised], timeout: 8), .completed,
+                       "Use the actual labelled native test surface and WebKit frame, not an assumed keyboard height")
+        let opened = try awaitSidebarSearchTransition("open", in: web)
+        let current = try sidebarState(in: web, search: true)
+        XCTAssertEqual(current.pageInstance, instance)
+        XCTAssertEqual(current.activeDestination, "Notebooks")
+        XCTAssertTrue(current.sidebarOpen, "Search must leave the drawer open")
+        XCTAssertEqual(current.closeCount, before.closeCount)
+        XCTAssertEqual(current.query, "sidebar query")
+        XCTAssertGreaterThanOrEqual(current.metrics.searchFontSize, 16)
+        XCTAssertEqual(current.metrics.viewportScale, before.metrics.viewportScale, accuracy: 0.001)
+        assertSidebarLayout(current.metrics, matches: before.metrics)
+        assertSidebarTransition(opened)
+
+        let raisedGeometry = try XCTUnwrap(observedWindowGeometry(in: app))
+        XCTAssertGreaterThan(current.metrics.settingsTop ?? 0, Double(raisedGeometry.availableBottom),
+                             "The settings entry stays at its original bottom position, behind the keyboard")
+        XCTAssertGreaterThan(current.metrics.accountTop, Double(raisedGeometry.availableBottom))
+        XCTAssertFalse(web.buttons["Open account menu"].isHittable,
+                       "The keyboard/clipped native viewport must cover the unchanged footer")
+        capture(app, named: "synthetic-sidebar-search-footer-stays-behind-input")
+
+        let done = app.toolbars.buttons["Done"].firstMatch
+        XCTAssertTrue(done.exists && done.isHittable)
+        done.tap()
+        let closed = try awaitSidebarSearchTransition("close", in: web)
+        let dismissed = XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in
+            guard let g = self.observedWindowGeometry(in: app) else { return false }
+            return g.availableBottom >= g.window.maxY - 1
+        }, object: app)
+        XCTAssertEqual(XCTWaiter.wait(for: [dismissed], timeout: 8), .completed)
+        assertSidebarTransition(closed)
+        let after = try sidebarState(in: web, search: true)
+        assertSidebarLayout(after.metrics, matches: before.metrics)
+        XCTAssertEqual(after.query, "sidebar query")
+        XCTAssertTrue(after.sidebarOpen)
+        web.buttons["Close search"].tap()
+        XCTAssertTrue(try sidebarState(in: web).sidebarOpen)
+        XCTAssertEqual(try sidebarState(in: web).closeCount, before.closeCount)
+
+        // Reopen and reach the final result with actual scrolling while the
+        // input surface is up: a fixed top must not trap the list's last row.
+        web.buttons["Search chats"].tap()
+        XCTAssertTrue(input.waitForExistence(timeout: 5))
+        input.tap()
+        let secondRaised = XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in
+            guard let g = self.observedWindowGeometry(in: app) else { return false }
+            return g.window.maxY - g.availableBottom >= 300
+        }, object: app)
+        XCTAssertEqual(XCTWaiter.wait(for: [secondRaised], timeout: 8), .completed)
+        let last = web.buttons["Open synthetic last search result"]
+        for _ in 0..<8 {
+            let g = try XCTUnwrap(observedWindowGeometry(in: app))
+            if last.isHittable && last.frame.maxY <= g.availableBottom + 2 { break }
+            let state = try sidebarState(in: web, search: true)
+            let top = state.metrics.resultsTop
+            let bottom = min(top + state.metrics.resultsHeight, Double(g.availableBottom - g.web.minY))
+            let visible = max(0, bottom - top)
+            XCTAssertGreaterThan(visible, 40, "The search results must retain a usable visible scroll area")
+            let origin = web.coordinate(withNormalizedOffset: .zero)
+            let lower = origin.withOffset(CGVector(dx: g.web.width * 0.5, dy: CGFloat(top + visible * 0.8)))
+            let upper = origin.withOffset(CGVector(dx: g.web.width * 0.5, dy: CGFloat(top + visible * 0.2)))
+            lower.press(forDuration: 0.05, thenDragTo: upper)
+        }
+        let g = try XCTUnwrap(observedWindowGeometry(in: app))
+        XCTAssertTrue(last.isHittable)
+        XCTAssertLessThanOrEqual(last.frame.maxY, g.availableBottom + 2)
+        last.tap()
+        XCTAssertTrue(web.staticTexts["Synthetic destination: Search result"].waitForExistence(timeout: 5))
+        XCTAssertFalse(try sidebarState(in: web).sidebarOpen)
+        capture(app, named: "synthetic-sidebar-last-search-result-reachable")
+    }
+
+    private struct SyntheticSidebarMetrics: Decodable {
+        let sidebarTop: Double
+        let sidebarHeight: Double
+        let sidebarBottom: Double
+        let footerTop: Double
+        let footerBottom: Double
+        let accountTop: Double
+        let settingsTop: Double?
+        let safeBottom: Double
+        let windowHeight: Double
+        let viewportHeight: Double
+        let width: Double
+        let documentScrollY: Double
+        let viewportScale: Double
+        let searchFontSize: Double
+        let dialogTop: Double?
+        let resultsTop: Double
+        let resultsHeight: Double
+    }
+
+    private struct SyntheticSidebarTransition: Decodable {
+        let revision: Int
+        let phase: String
+        let frames: Int
+        let duration: Double
+        let initial: SyntheticSidebarMetrics
+        let final: SyntheticSidebarMetrics
+        let sidebarTopRange: Double
+        let sidebarHeightRange: Double
+        let footerTopRange: Double
+        let accountTopRange: Double
+        let settingsTopRange: Double
+        let documentScrollRange: Double
+        let scaleRange: Double
+        let dialogTopRange: Double
+    }
+
+    private struct SyntheticSidebarState: Decodable {
+        let pageInstance: String
+        let activeDestination: String
+        let sidebarOpen: Bool
+        let closeCount: Int
+        let selectionCount: Int
+        let projectExpanded: Bool
+        let agentMode: Bool
+        let accountMenuOpen: Bool
+        let searchOpen: Bool
+        let query: String
+        let authenticated: Bool
+        let metrics: SyntheticSidebarMetrics
+        let transition: SyntheticSidebarTransition?
+    }
+
+    @MainActor
+    private func openSyntheticSidebarFixture(in app: XCUIApplication) throws -> XCUIElement {
+        let web = authenticatedWebWorkspace(in: app)
+        let link = web.links["Open synthetic sidebar fixture"]
+        reveal(link, in: app)
+        link.tap()
+        XCTAssertTrue(web.staticTexts["Authenticated sidebar fixture session"].waitForExistence(timeout: 10))
+        XCTAssertTrue(try sidebarState(in: web).authenticated)
+        return web
+    }
+
+    @MainActor
+    private func sidebarState(in web: XCUIElement, search: Bool = false) throws -> SyntheticSidebarState {
+        let prefix = search ? "Synthetic sidebar search state: " : "Synthetic sidebar state: "
+        let report = web.staticTexts.matching(NSPredicate(format: "label BEGINSWITH %@", prefix)).firstMatch
+        XCTAssertTrue(report.exists, "The fixture's explicit DOM geometry report must exist")
+        let bytes = try XCTUnwrap(String(report.label.dropFirst(prefix.count)).data(using: .utf8))
+        return try JSONDecoder().decode(SyntheticSidebarState.self, from: bytes)
+    }
+
+    @MainActor
+    private func awaitSidebarSearchTransition(_ phase: String, in web: XCUIElement) throws -> SyntheticSidebarTransition {
+        let completed = XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in
+            guard let state = try? self.sidebarState(in: web, search: true) else { return false }
+            return state.transition?.phase == phase
+        }, object: web)
+        XCTAssertEqual(XCTWaiter.wait(for: [completed], timeout: 5), .completed)
+        return try XCTUnwrap(sidebarState(in: web, search: true).transition)
+    }
+
+    private func assertSidebarLayout(_ current: SyntheticSidebarMetrics, matches baseline: SyntheticSidebarMetrics,
+                                     file: StaticString = #filePath, line: UInt = #line) {
+        XCTAssertEqual(current.sidebarTop, baseline.sidebarTop, accuracy: 2, file: file, line: line)
+        XCTAssertEqual(current.sidebarHeight, baseline.sidebarHeight, accuracy: 2, file: file, line: line)
+        XCTAssertEqual(current.sidebarBottom, baseline.sidebarBottom, accuracy: 2, file: file, line: line)
+        XCTAssertEqual(current.footerTop, baseline.footerTop, accuracy: 2, file: file, line: line)
+        XCTAssertEqual(current.footerBottom, baseline.footerBottom, accuracy: 2, file: file, line: line)
+        XCTAssertEqual(current.accountTop, baseline.accountTop, accuracy: 2, file: file, line: line)
+        if let top = baseline.settingsTop {
+            XCTAssertEqual(current.settingsTop ?? .nan, top, accuracy: 2, file: file, line: line)
+        }
+        XCTAssertEqual(current.documentScrollY, baseline.documentScrollY, accuracy: 2, file: file, line: line)
+    }
+
+    private func assertSidebarTransition(_ transition: SyntheticSidebarTransition,
+                                         file: StaticString = #filePath, line: UInt = #line) {
+        XCTAssertGreaterThanOrEqual(transition.frames, 18, file: file, line: line)
+        XCTAssertGreaterThanOrEqual(transition.duration, 900, file: file, line: line)
+        for range in [transition.sidebarTopRange, transition.sidebarHeightRange, transition.footerTopRange,
+                      transition.accountTopRange, transition.settingsTopRange, transition.documentScrollRange] {
+            XCTAssertLessThanOrEqual(range, 2, file: file, line: line)
+        }
+        XCTAssertLessThanOrEqual(transition.scaleRange, 0.001, file: file, line: line)
+    }
+
     private struct ObservedWindowGeometry {
         let window: CGRect
         let web: CGRect
