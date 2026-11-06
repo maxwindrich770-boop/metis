@@ -127,17 +127,28 @@ The Personal Team variant's Push/Share/Watch limitations below still apply.
 A Web surface exposes existing server features; it does not prove every
 provider OAuth flow, device capability or account setting has been exercised.
 
-The Liquid Glass/full-height pass was verified in eight selected Web cases
-across two runs: seven passed in the broader run, then the native settings
-close/draft-preservation case passed after moving its Done action inside the
-settings navigation stack. The geometry case measures the actual system input
-surface from a public XCUITest snapshot and checks portrait, retained web focus,
-landscape, home-indicator clearance and the full-screen workspace. Native sheet
-actions remain at least 44 points in the largest-text test. The subframe bridge,
-fallback entry, session rotation, downloads and popup confirmation are covered.
-These synthetic fixtures remain integration evidence rather than production
-Web-design screenshots. The earlier largest-text sign-in key-plane visibility
-failure and direct watchOS 8 runtime validation remain open.
+The glass-polish pass balances the sidebar's content gutters and uses a more
+opaque sidebar surface than the account/settings surfaces. Native device sheets
+use a shared material background with an opaque accessibility fallback. App-only
+composer CSS keeps editable text at least 16px to prevent iOS focus autozoom
+while preserving deliberate pinch zoom.
+
+Startup uses a neutral session-restoration view until the saved cookie has been
+checked against the server. A network error offers Retry without flashing the
+login form; a revoked or expired session returns to sign-in. No authenticated
+Web content is shown before the server accepts the session.
+
+Thirteen selected Web UI cases passed in one serial simulator run. They cover
+held server verification, offline recovery, revocation, textarea/contenteditable
+font/scale/centering, deliberate pinch zoom, portrait/landscape input geometry,
+native settings/draft preservation, fallback controls, subframe isolation,
+session rotation, downloads and popup confirmation. The geometry checks use an
+immutable public XCUITest snapshot and retain the 2-point assertion; native sheet
+actions remain at least 44 points at the largest text size.
+
+The fixtures are synthetic integration evidence rather than screenshots of the
+complete live Metis Web UI. The earlier largest-text native sign-in key-plane
+visibility failure and direct watchOS 8 runtime validation remain open.
 
 For focused Mac verification:
 

@@ -232,6 +232,63 @@ final class MetisUITests: XCTestCase {
     }
 
     @MainActor
+    func testSavedWebSessionShowsNeutralLaunchUntilServerVerificationFinishes() async throws {
+        try await resetFixtureSessionVerification()
+        let app = launch()
+        signIn(app, server: "http://localhost:43100")
+        _ = authenticatedWebWorkspace(in: app)
+        app.terminate()
+        app.launchArguments = ["-AppleLanguages", "(en)", "-AppleLocale", "en_US"]
+        try await setFixtureSessionState("hold-session")
+        app.launch()
+        try await assertNeutralSavedSessionVerification(in: app)
+        capture(app, named: "saved-session-neutral-launch-before-server-verification")
+
+        try await setFixtureSessionState("release-session")
+        _ = authenticatedWebWorkspace(in: app)
+        XCTAssertFalse(app.descendants(matching: .any)["metis.sessionRestoring"].firstMatch.exists)
+        XCTAssertFalse(app.buttons["metis.signIn"].exists)
+
+        // A failed network verification keeps the saved account behind Retry.
+        // The login form must remain absent until the user chooses another account.
+        app.terminate()
+        try await setFixtureSessionState("offline")
+        app.launch()
+        let retry = app.buttons["Retry saved session"]
+        XCTAssertTrue(retry.waitForExistence(timeout: 10), app.debugDescription)
+        XCTAssertFalse(app.buttons["metis.signIn"].exists)
+        XCTAssertFalse(app.secureTextFields["metis.password"].exists)
+        XCTAssertFalse(app.webViews["metis.webWorkspace"].exists)
+        try await setFixtureSessionState("online")
+        retry.tap()
+        let recoveredWeb = authenticatedWebWorkspace(in: app)
+        signOutFromWebFixture(in: app, web: recoveredWeb)
+    }
+
+    @MainActor
+    func testRevokedSavedWebSessionShowsLoginOnlyAfterServerVerification() async throws {
+        try await resetFixtureSessionVerification()
+        let app = launch()
+        signIn(app, server: "http://localhost:43100")
+        _ = authenticatedWebWorkspace(in: app)
+        app.terminate()
+        app.launchArguments = ["-AppleLanguages", "(en)", "-AppleLocale", "en_US"]
+        try await setFixtureSessionState("hold-session")
+        try await setFixtureSessionState("revoke")
+        app.launch()
+        try await assertNeutralSavedSessionVerification(in: app)
+
+        try await setFixtureSessionState("release-session")
+        XCTAssertTrue(app.buttons["metis.signIn"].waitForExistence(timeout: 10), app.debugDescription)
+        XCTAssertTrue(app.textFields["metis.server"].exists)
+        XCTAssertFalse(app.webViews["metis.webWorkspace"].exists,
+                       "A locally saved cookie must not bypass the server's revocation check")
+        XCTAssertFalse(app.buttons["Retry saved session"].exists)
+        XCTAssertFalse(app.descendants(matching: .any)["metis.sessionRestoring"].firstMatch.exists)
+        capture(app, named: "revoked-saved-session-sign-in-after-verification")
+    }
+
+    @MainActor
     func testWebSessionRotationSurvivesRestart() {
         let app = launch()
         signIn(app, server: "http://localhost:43100")
@@ -373,6 +430,61 @@ final class MetisUITests: XCTestCase {
     }
 
     @MainActor
+    func testSyntheticTextareaComposerKeepsScaleAndCenterWhenFocused() throws {
+        try assertSyntheticComposerPreservesScaleAndCenter(contentEditable: false)
+    }
+
+    @MainActor
+    func testSyntheticContenteditableComposerKeepsScaleAndCenterWhenFocused() throws {
+        try assertSyntheticComposerPreservesScaleAndCenter(contentEditable: true)
+    }
+
+    @MainActor
+    private func assertSyntheticComposerPreservesScaleAndCenter(contentEditable: Bool) throws {
+        XCUIDevice.shared.orientation = .portrait
+        let app = launch()
+        signIn(app, server: "http://localhost:43100")
+        let web = openSyntheticViewportFixture(in: app, contentEditableComposer: contentEditable)
+        let initial = try freshViewportMetrics(in: app, web: web)
+        XCTAssertEqual(initial.composerContentEditable, contentEditable,
+                       "Exercise the requested real editable element at the production-like 15px baseline")
+        XCTAssertGreaterThanOrEqual(initial.composerFontSize, 16,
+                                    "The app must raise the synthetic 15px baseline above iOS's focus-zoom threshold")
+        XCTAssertEqual(initial.composerCenterX, initial.width / 2, accuracy: 2)
+
+        let composer = web.descendants(matching: .any)["Synthetic viewport draft"].firstMatch
+        composer.tap()
+        composer.typeText("Focus must preserve the centered composer")
+        XCTAssertTrue(web.staticTexts["Composer retains focus"].waitForExistence(timeout: 5))
+        let focused = try freshViewportMetrics(in: app, web: web)
+        XCTAssertTrue(focused.focused)
+        XCTAssertGreaterThanOrEqual(focused.composerFontSize, 16)
+        XCTAssertEqual(focused.viewportScale, initial.viewportScale, accuracy: 0.01,
+                       "A trusted focus must not trigger WebKit autozoom; no user zoom gesture occurs here")
+        XCTAssertEqual(focused.viewportOffsetLeft, initial.viewportOffsetLeft, accuracy: 2,
+                       "Focusing the composer must not pan the page sideways")
+        XCTAssertEqual(focused.composerCenterX, focused.width / 2, accuracy: 2)
+        capture(app, named: "synthetic-fixture-not-design-\(contentEditable ? "contenteditable" : "textarea")-focused-scale-and-center")
+    }
+
+    @MainActor
+    func testSyntheticViewportStillAllowsDeliberatePinchZoom() throws {
+        XCUIDevice.shared.orientation = .portrait
+        let app = launch()
+        signIn(app, server: "http://localhost:43100")
+        let web = openSyntheticViewportFixture(in: app)
+        let initial = try freshViewportMetrics(in: app, web: web)
+        web.pinch(withScale: 1.3, velocity: 1)
+        let zoomed = XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in
+            guard let metrics = try? self.viewportMetrics(in: web) else { return false }
+            return metrics.viewportScale > initial.viewportScale + 0.05
+        }, object: web)
+        XCTAssertEqual(XCTWaiter.wait(for: [zoomed], timeout: 5), .completed,
+                       "Preventing focus autozoom must preserve deliberate user pinch zoom")
+        capture(app, named: "synthetic-fixture-not-design-deliberate-pinch-zoom")
+    }
+
+    @MainActor
     func testSidebarIPhoneControlsPreserveWebDraftAndOpenSettingsWithAccessibilityText() {
         XCUIDevice.shared.orientation = .portrait
         defer { XCUIDevice.shared.orientation = .portrait }
@@ -490,6 +602,11 @@ final class MetisUITests: XCTestCase {
         let height: Double
         let safeAreaBottom: Double
         let composerBottom: Double
+        let composerCenterX: Double
+        let composerFontSize: Double
+        let composerContentEditable: Bool
+        let viewportScale: Double
+        let viewportOffsetLeft: Double
         let focused: Bool
         let workspaceOpen: Bool
         let workspacePaddingBottom: Double
@@ -541,9 +658,10 @@ final class MetisUITests: XCTestCase {
     }
 
     @MainActor
-    private func openSyntheticViewportFixture(in app: XCUIApplication) -> XCUIElement {
+    private func openSyntheticViewportFixture(in app: XCUIApplication, contentEditableComposer: Bool = false) -> XCUIElement {
         let web = authenticatedWebWorkspace(in: app)
-        let openFixture = web.links["Open synthetic viewport fixture"]
+        let openFixture = web.links[contentEditableComposer
+            ? "Open synthetic contenteditable composer fixture" : "Open synthetic viewport fixture"]
         reveal(openFixture, in: app)
         openFixture.tap()
         XCTAssertTrue(web.staticTexts["Synthetic viewport fixture"].waitForExistence(timeout: 10))
@@ -777,14 +895,60 @@ final class MetisUITests: XCTestCase {
         XCTAssertFalse(app.webViews["metis.webWorkspace"].exists)
     }
 
-    private func setFixtureSessionState(_ state: String) async throws {
+    private struct FixtureVerificationState: Decodable {
+        let holdSessionVerification: Bool
+        let heldSessionRequests: Int
+    }
+
+    private func resetFixtureSessionVerification() async throws {
+        try await setFixtureSessionState("release-session")
+        try await setFixtureSessionState("online")
+        addTeardownBlock {
+            try await self.setFixtureSessionState("release-session")
+            try await self.setFixtureSessionState("online")
+        }
+    }
+
+    @MainActor
+    private func assertNeutralSavedSessionVerification(in app: XCUIApplication) async throws {
+        let restoring = app.descendants(matching: .any)["metis.sessionRestoring"].firstMatch
+        XCTAssertTrue(restoring.waitForExistence(timeout: 5), app.debugDescription)
+        var held = false
+        for _ in 0..<40 {
+            let (data, response) = try await URLSession.shared.data(from: fixtureControlURL())
+            XCTAssertEqual((response as? HTTPURLResponse)?.statusCode, 200)
+            let state = try JSONDecoder().decode(FixtureVerificationState.self, from: data)
+            held = state.holdSessionVerification && state.heldSessionRequests > 0
+            if held { break }
+            try await Task.sleep(for: .milliseconds(50))
+        }
+        XCTAssertTrue(held, "Startup must actually reach the held cookie-verification request")
+        XCTAssertTrue(restoring.exists)
+        XCTAssertFalse(app.webViews["metis.webWorkspace"].exists,
+                       "Authenticated web content must wait for the server response")
+        let unexpectedLogin = XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in
+            app.buttons["metis.signIn"].exists || app.textFields["metis.server"].exists
+                || app.secureTextFields["metis.password"].exists
+        }, object: app)
+        unexpectedLogin.isInverted = true
+        let observed = await XCTWaiter.fulfillment(of: [unexpectedLogin], timeout: 2)
+        XCTAssertEqual(observed, .completed,
+                       "The sign-in form must stay absent while the saved session is being verified")
+        XCTAssertTrue(restoring.exists)
+    }
+
+    private func fixtureControlURL(state: String? = nil) throws -> URL {
         var components = URLComponents()
         components.scheme = "http"
         components.host = "127.0.0.1"
         components.port = 43100
         components.path = "/fixture-control"
-        components.queryItems = [URLQueryItem(name: "state", value: state)]
-        var request = URLRequest(url: try XCTUnwrap(components.url), timeoutInterval: 5)
+        if let state { components.queryItems = [URLQueryItem(name: "state", value: state)] }
+        return try XCTUnwrap(components.url)
+    }
+
+    private func setFixtureSessionState(_ state: String) async throws {
+        var request = URLRequest(url: try fixtureControlURL(state: state), timeoutInterval: 5)
         request.httpMethod = "POST"
         let (_, response) = try await URLSession.shared.data(for: request)
         XCTAssertEqual((response as? HTTPURLResponse)?.statusCode, 204)

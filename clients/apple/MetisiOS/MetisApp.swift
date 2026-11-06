@@ -11,6 +11,7 @@ struct MetisApp: App {
 private struct RootView: View {
     private enum Destination { case chats, activity, projects, settings }
     private enum SignInField { case server, username, password }
+    private enum SessionStartup { case checking, signIn, retry }
     @FocusState private var signInFocus: SignInField?
 
     @ObservedObject var push: MetisAppDelegate
@@ -59,6 +60,7 @@ private struct RootView: View {
     @State private var watchEnabled = false
     @State private var shortcutDraft: MetisIntentInbox.Draft?
     @State private var composerDrafts: [String: ComposerDraft] = [:]
+    @State private var sessionStartup = SessionStartup.checking
     @State private var restoreAttempted = false
     @State private var canRetrySession = false
     @State private var flushingLogouts = false
@@ -72,6 +74,15 @@ private struct RootView: View {
             if client == nil { await restoreSession() }
             await flushLogouts()
         }
+            .onReceive(NotificationCenter.default.publisher(for: UIApplication.protectedDataDidBecomeAvailableNotification)) { _ in
+                guard client == nil, sessionStartup == .checking else { return }
+                Task { await restoreSession() }
+            }
+            .onChange(of: busy) { _, active in
+                guard !active, client == nil, scenePhase == .active,
+                      sessionStartup == .checking, !restoreAttempted else { return }
+                Task { await restoreSession() }
+            }
     }
 
     @ViewBuilder private var content: some View {
@@ -111,6 +122,7 @@ private struct RootView: View {
             }
             .sheet(isPresented: $iPhoneSettings) {
                 iPhoneConnectionSettings(client)
+                    .presentationBackground { MetisGlassSheetSurface() }
             }
             .sheet(isPresented: $nativeActivity) {
                 NavigationStack {
@@ -225,11 +237,46 @@ private struct RootView: View {
                 guard scenePhase == .active else { return }
                 await refreshChanges(client, revision: revision)
             }
-        } else {
+        } else if sessionStartup == .signIn {
             signInForm
+        } else {
+            sessionRestoration
         }
     }
 
+    private var sessionRestoration: some View {
+        ScrollView {
+            VStack(spacing: 24) {
+                MetisWordmark(width: 88)
+                if sessionStartup == .checking {
+                    ProgressView().tint(MetisTheme.ink)
+                    Text("Restoring your session…")
+                        .font(.subheadline)
+                        .foregroundStyle(MetisTheme.muted)
+                } else {
+                    Text("Couldn’t open Metis")
+                        .font(.title2.weight(.semibold))
+                    if let notice {
+                        MetisNotice(text: notice)
+                    }
+                    Button("Retry saved session") { Task { await restoreSession() } }
+                        .buttonStyle(MetisPrimaryButtonStyle())
+                    Button("Use another account") {
+                        clearSession()
+                        Task { await flushLogouts() }
+                    }
+                    .frame(maxWidth: .infinity, minHeight: 44)
+                }
+            }
+            .multilineTextAlignment(.center)
+            .padding(24)
+            .frame(maxWidth: 420)
+            .frame(maxWidth: .infinity)
+        }
+        .defaultScrollAnchor(.center)
+        .background(MetisTheme.background.ignoresSafeArea())
+        .accessibilityIdentifier(sessionStartup == .checking ? "metis.sessionRestoring" : "metis.sessionRestoreError")
+    }
 
     private func chatList(_ client: MetisAPI) -> some View {
         NavigationStack(path: $navigation) {
@@ -465,12 +512,17 @@ private struct RootView: View {
     private func restoreSession() async {
         guard !restoreAttempted, !busy, client == nil, UIApplication.shared.isProtectedDataAvailable else { return }
         restoreAttempted = true
+        sessionStartup = .checking
         canRetrySession = false
         guard let stored = MetisSessionVault.active, stored.origin == savedServer,
-              let address = try? ServerAddress(stored.origin) else { return }
+              let address = try? ServerAddress(stored.origin) else {
+            sessionStartup = .signIn
+            return
+        }
         guard stored.expiresAt > Date() else {
             _ = MetisSessionVault.close()
             notice = MetisError.unauthorized.localizedDescription
+            sessionStartup = .signIn
             return
         }
         busy = true
@@ -491,12 +543,15 @@ private struct RootView: View {
                 }
             }
         } catch MetisError.unauthorized {
+            guard !Task.isCancelled, client == nil else { restoreAttempted = false; return }
             _ = MetisSessionVault.close()
             notice = MetisError.unauthorized.localizedDescription
+            sessionStartup = .signIn
         } catch {
             restoreAttempted = false
-            if !Task.isCancelled {
+            if !Task.isCancelled, client == nil {
                 canRetrySession = true
+                sessionStartup = .retry
                 notice = message(for: error)
             }
         }
@@ -837,6 +892,7 @@ private struct RootView: View {
         pushRegistered = false
         pushSettings = false
         canRetrySession = false
+        sessionStartup = .signIn
         pushEvents = Set(MobilePushKind.allCases)
         username = ""
         password = ""

@@ -15,6 +15,8 @@
     "App" : {"localizations":{"de":{"stringUnit":{"state":"translated","value":"App"}}}},
     "App controls" : {"localizations":{"de":{"stringUnit":{"state":"translated","value":"App-Steuerung"}}}},
     "Opening your workspace…" : {"localizations":{"de":{"stringUnit":{"state":"translated","value":"Dein Arbeitsbereich wird geöffnet …"}}}},
+    "Restoring your session…" : {"localizations":{"de":{"stringUnit":{"state":"translated","value":"Sitzung wird wiederhergestellt …"}}}},
+    "Use another account" : {"localizations":{"de":{"stringUnit":{"state":"translated","value":"Anderes Konto verwenden"}}}},
     "Couldn’t open Metis" : {"localizations":{"de":{"stringUnit":{"state":"translated","value":"Metis konnte nicht geöffnet werden"}}}},
     "Try again" : {"localizations":{"de":{"stringUnit":{"state":"translated","value":"Erneut versuchen"}}}},
     "an external website" : {"localizations":{"de":{"stringUnit":{"state":"translated","value":"eine externe Website"}}}},

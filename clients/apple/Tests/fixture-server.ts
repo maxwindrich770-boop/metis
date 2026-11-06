@@ -39,6 +39,7 @@ function webWorkspaceFixture(username: string, cookieName: string, externalAddre
     <button id="scripted-external">Get an API key from the web fixture</button>
     <button id="logout">Sign out from the web fixture</button>
     <a href="/?fixture=viewport">Open synthetic viewport fixture</a>
+    <a href="/?fixture=composer-zoom">Open synthetic contenteditable composer fixture</a>
     <p id="error" role="alert"></p>
   </main>
   <script>
@@ -112,7 +113,7 @@ function webWorkspaceFixture(username: string, cookieName: string, externalAddre
 
 // Production-like geometry, deliberately SYNTHETIC: this validates the app/web
 // viewport boundary and sidebar bridge, never the production Metis design.
-function webViewportFixture(username: string) {
+function webViewportFixture(username: string, contentEditableComposer = false) {
   const expectedUsername = JSON.stringify(username).replaceAll("<", "\\u003c");
   return `<!doctype html>
 <html lang="en">
@@ -139,7 +140,9 @@ function webViewportFixture(username: string) {
     #focus-state { overflow-wrap: anywhere; }
     #composer-footer { position: absolute; inset: auto 0 0; padding: 12px 12px max(4px, env(safe-area-inset-bottom)); background: var(--background); }
     #composer { display: flex; align-items: end; gap: 8px; }
-    #draft { flex: 1; min-width: 0; height: 68px; margin: 0; padding: 12px; border: 1px solid #74766c; border-radius: 18px; color: inherit; background: var(--popover); resize: none; }
+    /* Same class-level baseline as production; the app must prevent focus zoom. */
+    .composer-input-area { font-size: 15px; }
+    #draft { flex: 1; min-width: 0; height: 68px; margin: 0; padding: 12px; border: 1px solid #74766c; border-radius: 18px; color: inherit; background: var(--popover); resize: none; overflow: auto; }
     aside { position: absolute; z-index: 10; inset: 0 auto 0 0; display: flex; flex-direction: column; width: min(88vw, 360px); padding: 12px; background: var(--popover); border-right: 1px solid #74766c; }
     aside h2 { font-size: 20px; }
     #sidebar-footer { margin-top: auto; }
@@ -178,7 +181,9 @@ function webViewportFixture(username: string) {
     </main>
     <footer id="composer-footer">
       <form id="composer" aria-label="Synthetic web composer">
-        <textarea id="draft" class="composer-input-area" aria-label="Synthetic viewport draft" placeholder="Synthetic draft"></textarea>
+        ${contentEditableComposer
+          ? '<div id="draft" class="composer-input-area" contenteditable="true" role="textbox" aria-multiline="true" aria-label="Synthetic viewport draft" tabindex="0"></div>'
+          : '<textarea id="draft" class="composer-input-area" aria-label="Synthetic viewport draft" placeholder="Synthetic draft"></textarea>'}
         <button type="button" id="keep-draft">Keep draft</button>
       </form>
     </footer>
@@ -234,6 +239,11 @@ function webViewportFixture(username: string) {
         width: innerWidth, height: innerHeight,
         safeAreaBottom: parseFloat(getComputedStyle(element("safe-area-probe")).paddingBottom) || 0,
         composerBottom: draft.getBoundingClientRect().bottom,
+        composerCenterX: (element("composer").getBoundingClientRect().left + element("composer").getBoundingClientRect().right) / 2,
+        composerFontSize: parseFloat(getComputedStyle(draft).fontSize),
+        composerContentEditable: draft.isContentEditable,
+        viewportScale: window.visualViewport?.scale,
+        viewportOffsetLeft: window.visualViewport?.offsetLeft,
         focused, readonly: draft.readOnly,
         workspaceOpen: !workspace.hidden,
         workspacePaddingBottom: parseFloat(getComputedStyle(workspace).paddingBottom) || 0,
@@ -402,15 +412,29 @@ async function main() {
   const droppedReplies = new Set<string>();
   let delayedHistory: { chatId: string; jobId: string } | undefined;
   let offline = false;
+  // This gate belongs only to the disposable loopback fixture. The UI test
+  // releases it explicitly after observing startup, rather than racing a timer.
+  let holdSessionVerification = false;
+  const heldSessionVerifications = new Set<() => void>();
   const server = createServer(async (incoming, outgoing) => {
     const abort = new AbortController();
     outgoing.once("close", () => abort.abort());
     try {
       const url = new URL(incoming.url ?? "/", `http://localhost:${port}`);
       const method = incoming.method;
+      if (url.pathname === "/fixture-control" && method === "GET") {
+        outgoing.writeHead(200, { "content-type": "application/json", "cache-control": "no-store" });
+        outgoing.end(JSON.stringify({ holdSessionVerification, heldSessionRequests: heldSessionVerifications.size }));
+        return;
+      }
       if (url.pathname === "/fixture-control" && method === "POST") {
         const state = url.searchParams.get("state");
         if (state === "offline" || state === "online") offline = state === "offline";
+        else if (state === "hold-session") holdSessionVerification = true;
+        else if (state === "release-session") {
+          holdSessionVerification = false;
+          for (const release of [...heldSessionVerifications]) release();
+        }
         else if (state === "external-message") {
           appendMessage(thread.id, { role: "assistant", content: "Message sent from another client 🌱" }, alice.id);
         }
@@ -424,6 +448,20 @@ async function main() {
         return;
       }
       if (offline) { outgoing.destroy(); return; }
+      // Native restore validates the saved cookie with GET /api/chats. Hold
+      // before dispatching the real handler so revocation is still authoritative.
+      if (holdSessionVerification && url.pathname === "/api/chats" && method === "GET") {
+        await new Promise<void>(resolve => {
+          const release = () => {
+            heldSessionVerifications.delete(release);
+            abort.signal.removeEventListener("abort", release);
+            resolve();
+          };
+          heldSessionVerifications.add(release);
+          abort.signal.addEventListener("abort", release, { once: true });
+        });
+        if (abort.signal.aborted) return;
+      }
       if (url.pathname === "/fixture-provider/models" && method === "GET") {
         outgoing.writeHead(200, { "content-type": "application/json" });
         outgoing.end(JSON.stringify({ object: "list", data: [{ id: "metis-fixture", object: "model" }] }));
@@ -459,7 +497,8 @@ async function main() {
         const account = getAuthenticatedCookieUser(request);
         const externalAddress = url.origin.replace("localhost", "127.0.0.1") + "/fixture-external";
         const fixture = url.searchParams.get("fixture");
-        const html = account && (fixture === "viewport" ? webViewportFixture(account.username)
+        const html = account && (fixture === "viewport" || fixture === "composer-zoom"
+          ? webViewportFixture(account.username, fixture === "composer-zoom")
           : fixture === "app-controls-subframe" ? webAppControlsSubframeFixture()
           : webWorkspaceFixture(account.username, CHAT_COOKIE, externalAddress));
         response = account ? new Response(html, {

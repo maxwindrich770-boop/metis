@@ -90,6 +90,7 @@ struct WebWorkspaceView: View {
             .presentationDetents([.medium, .large])
             .presentationDragIndicator(.visible)
             .presentationCornerRadius(32)
+            .presentationBackground { MetisGlassSheetSurface() }
         }
         .sheet(item: externalPresentation, onDismiss: { workspace.externalURL = nil }) { destination in
             WorkspaceExternalPage(url: destination.url)
@@ -256,7 +257,6 @@ private struct WorkspaceAppControls: View {
             .frame(maxWidth: .infinity)
         }
         .foregroundStyle(MetisTheme.ink)
-        .background(MetisTheme.background)
         .accessibilityIdentifier("metis.appControlsSheet")
     }
 
@@ -298,6 +298,23 @@ private struct WorkspaceAppControls: View {
         .buttonStyle(WorkspaceGlassButtonStyle())
         .disabled(disabled)
         .accessibilityIdentifier(identifier)
+    }
+}
+
+/// A shared sheet material keeps device settings connected to the workspace.
+/// Accessibility preferences always take precedence over translucency.
+struct MetisGlassSheetSurface: View {
+    @Environment(\.accessibilityReduceTransparency) private var reduceTransparency
+    @Environment(\.colorSchemeContrast) private var contrast
+
+    var body: some View {
+        if reduceTransparency || contrast == .increased {
+            MetisTheme.background
+        } else {
+            Rectangle()
+                .fill(.thinMaterial)
+                .overlay(MetisTheme.background.opacity(0.12))
+        }
     }
 }
 
@@ -349,7 +366,12 @@ enum MetisAppWebPresentation {
       style.textContent = `
         html[data-metis-native-app="ios"] {
           --metis-app-glass: color-mix(in oklch, var(--background) 88%, transparent);
+          --metis-app-sidebar-glass: color-mix(in oklch, var(--popover) 84%, transparent);
+          --metis-app-settings-glass: color-mix(in oklch, var(--popover) 74%, transparent);
           --metis-app-edge: color-mix(in oklch, var(--foreground) 13%, transparent);
+          --metis-app-highlight: color-mix(in oklch, var(--foreground) 6%, transparent);
+          --metis-app-muted-ink: color-mix(in oklch, var(--muted-foreground) 88%, var(--foreground));
+          --metis-app-sidebar-gutter: 0.5rem;
         }
         html[data-metis-native-app="ios"] [data-metis-app-header],
         html[data-metis-native-app="ios"] [data-metis-app-composer] {
@@ -365,14 +387,47 @@ enum MetisAppWebPresentation {
           box-shadow: inset 0 0 0 1px var(--metis-app-edge),
                       0 8px 28px color-mix(in oklch, var(--foreground) 5%, transparent);
         }
+        html[data-metis-native-app="ios"] aside[aria-label="Chats sidebar"],
+        html[data-metis-native-app="ios"] [data-metis-app-account-menu],
+        html[data-metis-native-app="ios"] [data-metis-app-settings-surface] {
+          --muted-foreground: var(--metis-app-muted-ink);
+        }
         html[data-metis-native-app="ios"] aside[aria-label="Chats sidebar"] {
-          background: color-mix(in oklch, var(--popover) 92%, transparent);
-          -webkit-backdrop-filter: blur(26px);
-          backdrop-filter: blur(26px);
+          background: linear-gradient(150deg, var(--metis-app-highlight), transparent 45%),
+                      var(--metis-app-sidebar-glass);
+          -webkit-backdrop-filter: blur(26px) saturate(1.15);
+          backdrop-filter: blur(26px) saturate(1.15);
           border-radius: 0 24px 24px 0;
+          box-shadow: inset -1px 0 0 var(--metis-app-edge);
+        }
+        /* UIKit already clears the status bar. Match the content gutters at
+           both ends; only the bottom still needs the web's home-indicator inset. */
+        html[data-metis-native-app="ios"] aside[aria-label="Chats sidebar"] [aria-label="Metis"]:not([role="img"]) {
+          padding-top: var(--metis-app-sidebar-gutter);
+          padding-bottom: var(--metis-app-sidebar-gutter);
         }
         html[data-metis-native-app="ios"] [data-metis-app-sidebar-footer] {
-          padding-bottom: max(0.5rem, env(safe-area-inset-bottom));
+          padding-bottom: calc(var(--metis-app-sidebar-gutter) + env(safe-area-inset-bottom));
+        }
+        html[data-metis-native-app="ios"] [data-metis-app-account-menu],
+        html[data-metis-native-app="ios"] [data-metis-app-settings-surface] {
+          background: linear-gradient(150deg, var(--metis-app-highlight), transparent 45%),
+                      var(--metis-app-settings-glass);
+          -webkit-backdrop-filter: blur(28px) saturate(1.15);
+          backdrop-filter: blur(28px) saturate(1.15);
+          border-radius: 24px;
+          box-shadow: inset 0 0 0 1px var(--metis-app-edge);
+        }
+        html[data-metis-native-app="ios"] [data-metis-app-settings-page] {
+          margin: 8px;
+          overflow: hidden;
+        }
+        /* The live composer is 15px. A readable minimum prevents WebKit's
+           focus zoom without constraining deliberate pinch or text scaling. */
+        html[data-metis-native-app="ios"] .composer-input-area,
+        html[data-metis-native-app="ios"] .composer-input-area textarea,
+        html[data-metis-native-app="ios"] .composer-input-area [contenteditable="true"] {
+          font-size: max(16px, 1rem);
         }
         html[data-metis-native-app="ios"] aside.workspace-surface {
           box-sizing: border-box;
@@ -416,13 +471,18 @@ enum MetisAppWebPresentation {
           html[data-metis-native-app="ios"] [data-metis-app-header],
           html[data-metis-native-app="ios"] [data-metis-app-composer],
           html[data-metis-native-app="ios"] aside[aria-label="Chats sidebar"],
+          html[data-metis-native-app="ios"] [data-metis-app-account-menu],
+          html[data-metis-native-app="ios"] [data-metis-app-settings-surface],
           html[data-metis-native-app="ios"] [data-metis-app-controls] {
             background: var(--background);
             -webkit-backdrop-filter: none;
             backdrop-filter: none;
             border-color: var(--foreground);
           }
-          html[data-metis-native-app="ios"] [data-metis-app-composer] {
+          html[data-metis-native-app="ios"] [data-metis-app-composer],
+          html[data-metis-native-app="ios"] aside[aria-label="Chats sidebar"],
+          html[data-metis-native-app="ios"] [data-metis-app-account-menu],
+          html[data-metis-native-app="ios"] [data-metis-app-settings-surface] {
             box-shadow: inset 0 0 0 1px var(--foreground);
           }
         }
@@ -450,6 +510,10 @@ enum MetisAppWebPresentation {
         }
         document.documentElement.dataset.metisNativeApp = 'ios';
         for (const account of accountButtons) {
+          const menu = document.getElementById(account.getAttribute('aria-controls') || '');
+          if (menu?.matches('[role="menu"]') && !menu.hasAttribute('data-metis-app-account-menu')) {
+            menu.dataset.metisAppAccountMenu = '';
+          }
           const sidebar = account.closest('aside');
           const footer = account.parentElement;
           if (!sidebar || !footer) continue;
@@ -473,6 +537,22 @@ enum MetisAppWebPresentation {
         for (const input of document.querySelectorAll('.composer-input-area')) {
           const form = input.closest('form');
           if (form && !form.hasAttribute('data-metis-app-composer')) form.dataset.metisAppComposer = '';
+        }
+        // Settings can be a full account page on phones or a dialog on wider
+        // layouts. Decorate only their existing semantic surface, never all dialogs.
+        for (const surface of document.querySelectorAll('[data-metis-app-settings-surface]')) {
+          if (!surface.querySelector('section[aria-labelledby="settings-page-title"]')) {
+            delete surface.dataset.metisAppSettingsSurface;
+            delete surface.dataset.metisAppSettingsPage;
+          }
+        }
+        for (const section of document.querySelectorAll('section[aria-labelledby="settings-page-title"]')) {
+          const dialog = section.closest('[data-slot="dialog-content"]');
+          const page = section.closest('main[aria-label="Settings"]')?.parentElement;
+          const surface = dialog || page;
+          if (!surface) continue;
+          if (!surface.hasAttribute('data-metis-app-settings-surface')) surface.dataset.metisAppSettingsSurface = '';
+          if (!dialog && !surface.hasAttribute('data-metis-app-settings-page')) surface.dataset.metisAppSettingsPage = '';
         }
         announceAvailability(Boolean(document.querySelector('[data-metis-app-controls]')));
       };

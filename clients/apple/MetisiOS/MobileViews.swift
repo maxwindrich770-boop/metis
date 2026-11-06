@@ -311,6 +311,22 @@ struct PushSettingsView: View {
     }
 }
 
+private struct ConnectionSettingsSurface: ViewModifier {
+    let glass: Bool
+
+    @ViewBuilder
+    func body(content: Content) -> some View {
+        if glass {
+            content
+                .scrollContentBackground(.hidden)
+                .background(Color.clear)
+                .toolbarBackground(.hidden, for: .navigationBar)
+        } else {
+            content.metisScreen()
+        }
+    }
+}
+
 struct ConnectionSettingsView: View {
     let client: MetisAPI
     let installationID: String
@@ -375,7 +391,7 @@ struct ConnectionSettingsView: View {
                 if let error { Text(error).font(.footnote) }
                 if let status { Text(status).font(.footnote) }
             }
-            .metisScreen()
+            .modifier(ConnectionSettingsSurface(glass: close != nil))
             .navigationTitle(title)
             .toolbar {
                 if let close {
