@@ -459,8 +459,11 @@ enum MetisAppWebPresentation {
           bottom: 0 !important;
           transform: translateY(var(--metis-app-composer-shift, 0px));
         }
-        /* Keep the same footprint and pane alignment through focus/blur,
-           including landscape and wider layouts. Only the editor translates. */
+        html[data-metis-native-app="ios"] [data-metis-app-empty-greeting] {
+          transform: translateY(var(--metis-app-greeting-shift, 0px));
+        }
+        /* Keep the same footprint and pane alignment through focus/blur.
+           The empty greeting follows its editor; message transcripts stay put. */
         html[data-metis-native-app="ios"] [data-metis-app-empty-dock] {
           position: relative !important;
           top: auto !important;
@@ -543,9 +546,31 @@ enum MetisAppWebPresentation {
       `;
       document.head.append(style);
 
-      // This only measures our decorated editor, never chat or account values.
-      // The full-height background keeps its layout while the native viewport
-      // clips the area behind the keyboard. The empty composer stays in flow.
+      const dockGreetings = new WeakMap();
+      const clearGreetingShift = dock => {
+        const greeting = dockGreetings.get(dock);
+        if (greeting) {
+          delete greeting.dataset.metisAppEmptyGreeting;
+          greeting.style.removeProperty('--metis-app-greeting-shift');
+          dockGreetings.delete(dock);
+        }
+      };
+      const updateGreetingShift = (dock, shift) => {
+        const candidate = dock.hasAttribute('data-metis-app-empty-dock') ? dock.previousElementSibling : null;
+        const greeting = candidate && (candidate.matches('h2') || candidate.querySelector(':scope > h2'))
+          ? candidate : null;
+        if (dockGreetings.get(dock) !== greeting) {
+          clearGreetingShift(dock);
+          if (greeting) dockGreetings.set(dock, greeting);
+        }
+        if (greeting) {
+          greeting.dataset.metisAppEmptyGreeting = '';
+          greeting.style.setProperty('--metis-app-greeting-shift', shift + 'px');
+        }
+      };
+      // Keep the empty welcome group together when a full keyboard occludes
+      // its editor. Message transcripts retain their full-height layout.
+      // This measures geometry only; no heading text or chat values are read.
       const updateComposerLayout = () => {
         const fullHeight = parseFloat(getComputedStyle(document.documentElement)
           .getPropertyValue('--metis-app-window-height')) || innerHeight;
@@ -555,7 +580,9 @@ enum MetisAppWebPresentation {
           const reservedInset = dockSpacers.get(dock)?.getBoundingClientRect().height || 0;
           const bottomInFlow = dock.getBoundingClientRect().bottom - previous - reservedInset;
           const next = keyboardVisible ? Math.min(0, innerHeight - bottomInFlow) : 0;
-          if (Math.abs(next - previous) > 0.25) dock.style.setProperty('--metis-app-composer-shift', next + 'px');
+          const applied = Math.abs(next - previous) > 0.25 ? next : previous;
+          if (applied !== previous) dock.style.setProperty('--metis-app-composer-shift', applied + 'px');
+          updateGreetingShift(dock, applied);
         }
       };
       const composerResizeObserver = new ResizeObserver(updateComposerLayout);
@@ -659,6 +686,7 @@ enum MetisAppWebPresentation {
         }
         for (const dock of observedDocks) {
           if (!dock.isConnected) {
+            clearGreetingShift(dock);
             composerResizeObserver.unobserve(dock);
             observedDocks.delete(dock);
             dockSpacers.get(dock)?.remove();
@@ -728,6 +756,22 @@ private final class WorkspaceWebContainer: UIView {
     private var keyboardTransitionUntil: CFTimeInterval = 0
     private var publishedWindowSize: CGSize = .zero
     private var nativeChatLayoutActive = false
+    #if DEBUG && targetEnvironment(simulator)
+    private let syntheticInputOcclusion: UILabel? = {
+        guard ProcessInfo.processInfo.arguments.contains("-metis.synthetic-input-occlusion") else { return nil }
+        let panel = UILabel()
+        panel.accessibilityIdentifier = "metis.syntheticInputOcclusion"
+        panel.text = "Synthetic input occlusion — not the system keyboard"
+        panel.font = .preferredFont(forTextStyle: .caption1)
+        panel.textAlignment = .center
+        panel.numberOfLines = 0
+        panel.backgroundColor = .secondarySystemBackground
+        panel.isAccessibilityElement = true
+        panel.isUserInteractionEnabled = false
+        panel.isHidden = true
+        return panel
+    }()
+    #endif
 
 
     init(webView: WKWebView) {
@@ -747,6 +791,9 @@ private final class WorkspaceWebContainer: UIView {
                                                name: UIResponder.keyboardWillChangeFrameNotification, object: nil)
         webView.accessibilityIdentifier = "metis.webWorkspace"
         addSubview(webView)
+        #if DEBUG && targetEnvironment(simulator)
+        if let panel = syntheticInputOcclusion { addSubview(panel) }
+        #endif
         // UIKit/WebKit view geometry changes occur on the main thread. Observe
         // the web process's later content-size/offset update, not just our frame.
         viewportScrollObservations = [
@@ -784,7 +831,20 @@ private final class WorkspaceWebContainer: UIView {
 
     override func layoutSubviews() {
         super.layoutSubviews()
-        let viewport = viewportGuide.layoutFrame
+        var viewport = viewportGuide.layoutFrame
+        #if DEBUG && targetEnvironment(simulator)
+        // A public, explicitly synthetic test surface exercises a full-sized
+        // occlusion even when Simulator exposes only the system accessory.
+        if let panel = syntheticInputOcclusion, let window {
+            let fullWindow = convert(window.bounds, from: window)
+            let inputVisible = viewport.maxY < fullWindow.maxY - 1
+            let height: CGFloat = inputVisible ? min(360, fullWindow.height) : 0
+            panel.frame = CGRect(x: viewport.minX, y: fullWindow.maxY - height,
+                                 width: viewport.width, height: height)
+            panel.isHidden = !inputVisible
+            if inputVisible { viewport.size.height = max(0, min(viewport.maxY, panel.frame.minY) - viewport.minY) }
+        }
+        #endif
         publishWindowGeometry()
         guard webView.frame != viewport else {
             reconcileViewportFocusScroll()

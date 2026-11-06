@@ -602,13 +602,20 @@ final class MetisUITests: XCTestCase {
     }
 
     @MainActor
+    func testSyntheticEmptyComposerKeepsGreetingClearWithLargeInputOcclusion() throws {
+        try assertSyntheticKeyboardDismissal(centeredEmptyState: false, productionEmptyState: true,
+                                              largeInputOcclusion: true)
+    }
+
+    @MainActor
     private func assertSyntheticKeyboardDismissal(centeredEmptyState: Bool, productionEmptyState: Bool = false,
-                                                  tallComposer: Bool = false) throws {
+                                                  tallComposer: Bool = false, largeInputOcclusion: Bool = false) throws {
         XCUIDevice.shared.orientation = .portrait
-        let app = launch()
+        let app = launch(additionalArguments: largeInputOcclusion ? ["-metis.synthetic-input-occlusion"] : [])
         signIn(app, server: "http://localhost:43100")
         let web = openSyntheticViewportFixture(in: app, centeredEmptyState: centeredEmptyState,
-                                               productionEmptyState: productionEmptyState, tallComposer: tallComposer)
+                                               productionEmptyState: productionEmptyState, tallComposer: tallComposer,
+                                               largeEmptyComposer: largeInputOcclusion)
         let composer = web.descendants(matching: .any)["Synthetic viewport draft"].firstMatch
         let header = web.buttons["Open sidebar"]
         let closedHeader = header.frame
@@ -617,6 +624,9 @@ final class MetisUITests: XCTestCase {
         let greeting = web.staticTexts[productionEmptyState
             ? "Synthetic empty chat greeting" : "Synthetic centered empty state"]
         let closedGreetingY = centeredEmptyState || productionEmptyState ? greeting.frame.midY : nil
+        let closedMetrics = try viewportMetrics(in: web)
+        let closedGreetingGap = try (productionEmptyState ? XCTUnwrap(closedMetrics.greetingComposerGap) : nil)
+        if let closedGreetingGap { XCTAssertGreaterThan(closedGreetingGap, 0) }
         let expectedDraft = tallComposer
             ? "Tall composer line one\nLine two stays put\nLine three stays put\nLine four stays put"
             : "Draft stays through repeated keyboard dismissal"
@@ -641,6 +651,18 @@ final class MetisUITests: XCTestCase {
             XCTAssertEqual(XCTWaiter.wait(for: [inputVisible], timeout: 5), .completed,
                            "Every cycle must show a real system input surface before dismissal")
             XCTAssertEqual(composer.value as? String, expectedDraft)
+            if largeInputOcclusion {
+                let occlusion = app.descendants(matching: .any)["metis.syntheticInputOcclusion"].firstMatch
+                XCTAssertTrue(occlusion.waitForExistence(timeout: 5), "This is an explicit synthetic occlusion panel, not a software-keyboard visibility claim")
+                let geometry = try XCTUnwrap(observedWindowGeometry(in: app))
+                XCTAssertGreaterThanOrEqual(geometry.window.maxY - geometry.availableBottom, 300,
+                                             "The regression must exercise a full-keyboard-sized reduction, not only the system accessory")
+                XCTAssertEqual(geometry.web.maxY, geometry.availableBottom, accuracy: 2)
+                let focusedMetrics = try viewportMetrics(in: web)
+                XCTAssertGreaterThan(closedMetrics.composerTop - focusedMetrics.composerTop,
+                                     try XCTUnwrap(closedGreetingGap) + 2,
+                                     "The editor must move far enough that the old dock-only shift would cross the fixed greeting")
+            }
             let openingPrefix = "Synthetic keyboard transition: "
             let openingReport = web.staticTexts.matching(NSPredicate(format: "label BEGINSWITH %@", openingPrefix)).firstMatch
             XCTAssertTrue(openingReport.waitForExistence(timeout: 5))
@@ -658,9 +680,16 @@ final class MetisUITests: XCTestCase {
             XCTAssertLessThanOrEqual(opening.transcriptScrollRange, 2)
             XCTAssertLessThanOrEqual(opening.documentScrollRange, 2)
             XCTAssertLessThanOrEqual(opening.maxShellHeightError, 2)
-            if let closedGreetingY {
+            if let closedGreetingGap {
+                XCTAssertGreaterThanOrEqual(try XCTUnwrap(opening.minGreetingComposerGap), closedGreetingGap - 2,
+                                             "The editor must stay below the greeting throughout input presentation")
+                XCTAssertLessThanOrEqual(try XCTUnwrap(opening.greetingComposerGapRange), 2)
+                XCTAssertLessThanOrEqual(try XCTUnwrap(opening.maxGreetingComposerShiftError), 2,
+                                        "The greeting and editor must move by the same amount")
+                XCTAssertGreaterThanOrEqual(composer.frame.minY, greeting.frame.maxY - 1)
+            } else if let closedGreetingY {
                 XCTAssertLessThanOrEqual(try XCTUnwrap(opening.emptyCenterYRange), 2,
-                                        "Opening the keyboard must leave the greeting stationary")
+                                        "The separate absolute centered-background fixture remains stationary")
                 XCTAssertEqual(greeting.frame.midY, closedGreetingY, accuracy: 2)
             }
             if let closedAnchorY, let closedDockHeight {
@@ -726,9 +755,14 @@ final class MetisUITests: XCTestCase {
             XCTAssertLessThanOrEqual(transition.viewportScaleRange, 0.001)
             XCTAssertLessThanOrEqual(transition.maxDockBottom, 1,
                                     "Late closing-offset writes must not lift the dock after blur")
-            if centeredEmptyState || productionEmptyState {
+            if let closedGreetingGap {
+                XCTAssertGreaterThanOrEqual(try XCTUnwrap(transition.minGreetingComposerGap), closedGreetingGap - 2,
+                                             "The editor must not pass in front of the greeting while input closes")
+                XCTAssertLessThanOrEqual(try XCTUnwrap(transition.greetingComposerGapRange), 2)
+                XCTAssertLessThanOrEqual(try XCTUnwrap(transition.maxGreetingComposerShiftError), 2)
+            } else if centeredEmptyState {
                 XCTAssertLessThanOrEqual(try XCTUnwrap(transition.emptyCenterYRange), 2,
-                                        "The centered background must not fly while the keyboard collapses")
+                                        "The separate absolute centered-background fixture remains stationary")
             }
             if let closedAnchorY, let closedDockHeight {
                 XCTAssertLessThanOrEqual(try XCTUnwrap(transition.transcriptAnchorTopRange), 2,
@@ -982,6 +1016,9 @@ final class MetisUITests: XCTestCase {
         let dockHeightRange: Double
         let revision: Int
         let emptyCenterYRange: Double?
+        let minGreetingComposerGap: Double?
+        let greetingComposerGapRange: Double?
+        let maxGreetingComposerShiftError: Double?
         let frames: Int
         let duration: Double
         let headerTopRange: Double
@@ -1008,6 +1045,9 @@ final class MetisUITests: XCTestCase {
         let maxDockBottom: Double
         let viewportScaleRange: Double
         let emptyCenterYRange: Double?
+        let minGreetingComposerGap: Double?
+        let greetingComposerGapRange: Double?
+        let maxGreetingComposerShiftError: Double?
     }
 
     private struct SyntheticViewportMetrics: Decodable {
@@ -1033,6 +1073,9 @@ final class MetisUITests: XCTestCase {
         let transcriptBottomDistance: Double
         let transcriptAnchorTop: Double?
         let emptyCenterY: Double?
+        let greetingBottom: Double?
+        let composerTop: Double
+        let greetingComposerGap: Double?
         let composerBottom: Double
         let composerCenterX: Double
         let composerFontSize: Double
@@ -1152,12 +1195,13 @@ final class MetisUITests: XCTestCase {
     @MainActor
     private func openSyntheticViewportFixture(in app: XCUIApplication, contentEditableComposer: Bool = false,
                                                centeredEmptyState: Bool = false, productionEmptyState: Bool = false,
-                                               tallComposer: Bool = false) -> XCUIElement {
+                                               tallComposer: Bool = false, largeEmptyComposer: Bool = false) -> XCUIElement {
         let web = authenticatedWebWorkspace(in: app)
-        let openFixture = web.links[tallComposer ? "Open synthetic tall composer transcript fixture"
+        let openFixture = web.links[largeEmptyComposer ? "Open synthetic large empty composer fixture"
+            : (tallComposer ? "Open synthetic tall composer transcript fixture"
             : (productionEmptyState ? "Open synthetic empty composer flow fixture"
                : (centeredEmptyState ? "Open synthetic centered empty-state fixture"
-                  : (contentEditableComposer ? "Open synthetic contenteditable composer fixture" : "Open synthetic viewport fixture")))]
+                  : (contentEditableComposer ? "Open synthetic contenteditable composer fixture" : "Open synthetic viewport fixture"))))]
         reveal(openFixture, in: app)
         openFixture.tap()
         XCTAssertTrue(web.staticTexts["Synthetic viewport fixture"].waitForExistence(timeout: 10))
@@ -1241,6 +1285,10 @@ final class MetisUITests: XCTestCase {
             }
             if node.elementType == .statusBar && !node.frame.isEmpty {
                 statusBarBottom = max(statusBarBottom ?? node.frame.maxY, node.frame.maxY)
+            }
+            if node.identifier == "metis.syntheticInputOcclusion" {
+                let intersection = windowFrame.intersection(node.frame)
+                if !intersection.isNull && !intersection.isEmpty { inputSurfaces.append(intersection) }
             }
             if node.elementType == .keyboard {
                 let intersection = windowFrame.intersection(node.frame)

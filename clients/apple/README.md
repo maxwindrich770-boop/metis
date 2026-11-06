@@ -30,7 +30,9 @@ including a visible accessory bar during rotation. Within chat panes, the shell
 retains the full window height so keyboard transitions do not recenter the
 background or repin the transcript. Only the composer translates when it would
 otherwise overlap the input surface; its original in-flow/absolute footprint
-and horizontal pane alignment stay unchanged through focus and blur. The app restores
+and horizontal pane alignment stay unchanged through focus and blur. The empty
+welcome heading and optional incognito text follow the editor by the same
+displacement, so a full-height keyboard cannot push the editor across the heading. The app restores
 its session from Keychain after restart. Shared-text and shortcut drafts retain
 their native review composer; push/Watch chat links open the corresponding Web chat.
 
@@ -170,8 +172,13 @@ does not repin messages because a tall composer's measured height lost its inset
 The keyboard regression repeatedly opens and dismisses both established-chat
 and empty-state composers using Web blur and the actual system Done button;
 readonly focus with a retained input accessory remains a separate geometry case.
-Frame samples measure greeting/header/root/transcript stability during transitions,
-not only their endpoints. The temporary native diagnostic code is removed from
+Frame samples measure the empty greeting-to-editor gap and matching displacement,
+plus header/root/transcript stability during transitions, not only their endpoints.
+An explicit Debug Simulator-only launch flag, `-metis.synthetic-input-occlusion`,
+adds a labelled 360 pt native occlusion surface while the real keyboard guide is
+raised. This covers larger occupied areas when Simulator only shows its input
+accessory; it is not an Apple software-keyboard rendering claim and is excluded
+from physical-device builds. The temporary native diagnostic code is removed from
 the final source.
 
 Account details use the canonical profile API when the optional mobile session
