@@ -47,7 +47,7 @@ runtime; the available watchOS 27.2 runtime is a separate current-OS check.
 A toolchain/runtime that supports watchOS 8 is still needed for the legacy
 runtime acceptance test. The committed/device target remains 8.0. For a
 current Watch simulator, use the
-[SDK-scoped invocation](../../docs/APPLE-CLIENTS-IMPLEMENTATION.md#building-with-a-newer-watch-simulator-sdk)
+[simulator-only invocation](../../docs/APPLE-CLIENTS-IMPLEMENTATION.md#building-with-a-newer-watch-simulator-sdk)
 to derive its minimum from live SDK metadata and override only the simulator
 build. Xcode 27.2's SDK requires 9.0 for a full build; Apple's matrix lists
 watchOS 8 deployment support in Xcode 26.6. A successful source typecheck at

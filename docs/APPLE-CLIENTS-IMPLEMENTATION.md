@@ -186,7 +186,7 @@ Keep the repository and device deployment target at 8.0. Building a device
 artifact for that minimum requires an SDK that supports it: Apple's
 [current Xcode support matrix](https://developer.apple.com/support/xcode/)
 lists watchOS 8–26.5 deployment support for Xcode 26.6 and watchOS 9–27 for
-Xcode 27.2. A current simulator may use the scoped command below without
+Xcode 27.2. A current simulator may use the destination-specific command below without
 changing that device requirement.
 
 For simulator acceptance, build the **MetisWatch** scheme and inspect the
@@ -212,9 +212,11 @@ not evidence of an 8.x device build. Then verify:
 Resolve the SDK from the selected Xcode installation. This command reads its
 documented target metadata, fails if that metadata is absent or malformed,
 and uses the greater of the app's requested minimum and the SDK's minimum.
-The build override matches only `watchsimulator`; it does not alter
-`MetisWatch.xcconfig` or the `watchos` device build. Replace the destination
-placeholder with an actually installed Watch simulator ID.
+The ordinary deployment-setting assignment applies only to this explicit
+Watch Simulator build invocation. It does not alter `MetisWatch.xcconfig`.
+Do not copy that override into a device build or the project's persistent
+settings. Replace the destination placeholder with an actually installed
+Watch simulator ID.
 
 ```sh
 METIS_WATCH_REQUESTED_OS=8.0
@@ -244,18 +246,21 @@ xcrun --sdk watchsimulator swiftc -typecheck -parse-as-library \
   -target "$METIS_WATCH_SIM_ARCH-apple-watchos$METIS_WATCH_REQUESTED_OS-simulator" \
   -sdk "$METIS_WATCH_SIM_SDK" clients/apple/MetisWatch/MetisWatchApp.swift || exit 1
 
-# Full build for the installed simulator SDK, with a simulator-only override.
+# Full build for this Watch Simulator destination only.
 xcodebuild -project clients/apple/MetisApple.xcodeproj -scheme MetisWatch \
   -sdk watchsimulator -destination 'platform=watchOS Simulator,id=<installed-watch-udid>' \
-  "WATCHOS_DEPLOYMENT_TARGET[sdk=watchsimulator*]=$METIS_WATCH_SIM_MIN" \
+  "WATCHOS_DEPLOYMENT_TARGET=$METIS_WATCH_SIM_MIN" \
   CODE_SIGNING_ALLOWED=NO build
 ```
 
 Run the build only after the typecheck succeeds. A 9.0 simulator minimum from
 this calculation is expected for SDK 27.2; never label that artifact as a
-watchOS 8 build. The same scoped setting can be supplied to the iPhone
-simulator test command when its scheme builds the embedded Watch target.
-Check resolved build settings and artifact metadata after running it.
+watchOS 8 build. Keep both `-sdk watchsimulator` and the Watch Simulator
+destination in this command. Check resolved build settings and artifact
+metadata after running it. SDK conditions are supported inside xcconfig
+files, but bracketed conditional assignments must not be passed directly as
+`xcodebuild` command-line settings: this toolchain parses the first equals
+sign as the assignment separator.
 
 Before claiming watchOS 8 runtime compatibility, repeat the applicable
 checks with an installed 8.x runtime and a supporting toolchain. Physical
