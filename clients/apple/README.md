@@ -25,8 +25,12 @@ These actions appear in an on-demand native sheet; there is no permanent bottom
 bar. On same-origin pages without the sidebar, a compact native fallback keeps
 the actions reachable. The Web workspace fills the available height through
 the bottom safe area; its CSS owns home-indicator clearance. A native UIKit
-keyboard layout guide keeps the Web view above the actual input surface,
-including a visible accessory bar during rotation. The app restores
+keyboard layout guide clips the Web view above the actual input surface,
+including a visible accessory bar during rotation. Within chat panes, the shell
+retains the full window height so keyboard transitions do not recenter the
+background or repin the transcript. Only the composer translates when it would
+otherwise overlap the input surface; its original in-flow/absolute footprint
+and horizontal pane alignment stay unchanged through focus and blur. The app restores
 its session from Keychain after restart. Shared-text and shortcut drafts retain
 their native review composer; push/Watch chat links open the corresponding Web chat.
 
@@ -145,8 +149,8 @@ checked against the server. A network error offers Retry without flashing the
 login form; a revoked or expired session returns to sign-in. No authenticated
 Web content is shown before the server accepts the session.
 
-Twenty selected functional cases are confirmed across focused simulator runs.
-In addition to held server verification, offline recovery, revocation, focus
+The earlier session-preferences pass confirmed twenty selected functional cases
+across focused simulator runs. In addition to held server verification, offline recovery, revocation, focus
 scale/centering, pinch, session rotation and external actions, they cover model
 preference restart/rotation/account isolation/removal, canonical profile fallback,
 push availability explanations, full-height sidebar material and safe controls.
@@ -156,7 +160,17 @@ The geometry checks use an immutable public XCUITest snapshot and retain the
 scroll animation that DOM-only probes missed. After keyboard-driven resizing,
 only a fitted, unzoomed root with no user gesture/insets is normalized and stale
 bounds animations are removed; longer pages, gestures and pinch retain their
-behavior. The temporary native diagnostic code is removed from the final source.
+behavior. Correction covers both opening and closing through UIKit's reported
+transition duration and the following settle frames. Chat-only clipped root
+boxes keep the larger background from becoming a scrollable root document;
+other Web panes keep their normal viewport layout. Empty-state flow also retains
+its closed Home-indicator footprint while the native input surface changes.
+The keyboard regression repeatedly opens and dismisses both established-chat
+and empty-state composers using Web blur and the actual system Done button;
+readonly focus with a retained input accessory remains a separate geometry case.
+Frame samples measure greeting/header/root/transcript stability during transitions,
+not only their endpoints. The temporary native diagnostic code is removed from
+the final source.
 
 Account details use the canonical profile API when the optional mobile session
 endpoint is absent. Missing push-device APIs are explained separately. The

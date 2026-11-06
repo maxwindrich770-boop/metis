@@ -379,9 +379,22 @@ enum MetisAppWebPresentation {
         }
         /* The web view fills the screen. In-flow content owns one status-bar
            inset; fixed overlays paint behind it and inset their controls below. */
+        html[data-metis-native-app="ios"]:has([data-metis-app-composer-dock]),
+        html[data-metis-native-app="ios"]:has([data-metis-app-composer-dock]) body {
+          height: 100%;
+          overflow: clip;
+        }
         html[data-metis-native-app="ios"] .metis-shell {
           box-sizing: border-box;
           padding-top: env(safe-area-inset-top);
+        }
+        html[data-metis-native-app="ios"] .metis-shell:has([data-metis-app-composer-dock]) {
+          height: var(--metis-app-window-height, 100dvh) !important;
+        }
+        @media (max-width: 639px) {
+          html[data-metis-native-app="ios"] .metis-shell [class~="pb-[10svh]"] {
+            padding-bottom: calc(var(--metis-app-window-height, 100svh) * 0.1) !important;
+          }
         }
         html[data-metis-native-app="ios"] [data-metis-app-header],
         html[data-metis-native-app="ios"] [data-metis-app-composer] {
@@ -442,8 +455,25 @@ enum MetisAppWebPresentation {
         }
         /* UIKit already removes the keyboard from the web viewport. The
            server's transient visualViewport bottom offset must not remove it twice. */
-        html[data-metis-native-app="ios"] [data-metis-app-composer-dock]:focus-within {
+        html[data-metis-native-app="ios"] [data-metis-app-composer-dock] {
           bottom: 0 !important;
+          transform: translateY(var(--metis-app-composer-shift, 0px));
+        }
+        /* Keep the same footprint and pane alignment through focus/blur,
+           including landscape and wider layouts. Only the editor translates. */
+        html[data-metis-native-app="ios"] [data-metis-app-empty-dock] {
+          position: relative !important;
+          top: auto !important;
+          left: auto !important;
+          right: auto !important;
+        }
+        html[data-metis-native-app="ios"] [data-metis-app-composer-dock]:not([data-metis-app-empty-dock]) {
+          position: absolute !important;
+        }
+        html[data-metis-native-app="ios"] [data-metis-app-keyboard-spacer] {
+          flex: none;
+          height: max(0px, max(0.25rem, var(--metis-app-home-inset, env(safe-area-inset-bottom))) - max(0.25rem, env(safe-area-inset-bottom)));
+          pointer-events: none;
         }
         html[data-metis-native-app="ios"] aside.workspace-surface {
           box-sizing: border-box;
@@ -513,6 +543,27 @@ enum MetisAppWebPresentation {
       `;
       document.head.append(style);
 
+      // This only measures our decorated editor, never chat or account values.
+      // The full-height background keeps its layout while the native viewport
+      // clips the area behind the keyboard. The empty composer stays in flow.
+      const updateComposerLayout = () => {
+        const fullHeight = parseFloat(getComputedStyle(document.documentElement)
+          .getPropertyValue('--metis-app-window-height')) || innerHeight;
+        const keyboardVisible = fullHeight > innerHeight + 1;
+        for (const dock of document.querySelectorAll('[data-metis-app-composer-dock]')) {
+          const previous = parseFloat(dock.style.getPropertyValue('--metis-app-composer-shift')) || 0;
+          const bottomInFlow = dock.getBoundingClientRect().bottom - previous;
+          const next = keyboardVisible ? Math.min(0, innerHeight - bottomInFlow) : 0;
+          if (Math.abs(next - previous) > 0.25) dock.style.setProperty('--metis-app-composer-shift', next + 'px');
+        }
+      };
+      const composerResizeObserver = new ResizeObserver(updateComposerLayout);
+      const observedDocks = new Set();
+      const dockSpacers = new WeakMap();
+      window.addEventListener('resize', updateComposerLayout);
+      window.visualViewport?.addEventListener('resize', updateComposerLayout);
+      document.addEventListener('metis-native-layout', updateComposerLayout);
+
       let lastAvailability = null;
       const announceAvailability = available => {
         if (lastAvailability === available) return;
@@ -557,7 +608,29 @@ enum MetisAppWebPresentation {
           const form = input.closest('form');
           if (form && !form.hasAttribute('data-metis-app-composer')) form.dataset.metisAppComposer = '';
           const dock = form?.closest('[class~="pointer-events-none"][class~="z-20"][class~="w-full"]');
-          if (dock && !dock.hasAttribute('data-metis-app-composer-dock')) dock.dataset.metisAppComposerDock = '';
+          if (dock && !dock.hasAttribute('data-metis-app-composer-dock')) {
+            dock.dataset.metisAppComposerDock = '';
+            composerResizeObserver.observe(dock);
+            observedDocks.add(dock);
+          }
+          if (dock) {
+            if (dock.classList.contains('relative')) {
+              dock.dataset.metisAppEmptyDock = '';
+              let spacer = dockSpacers.get(dock);
+              if (!spacer?.isConnected) {
+                spacer = document.createElement('div');
+                spacer.dataset.metisAppKeyboardSpacer = '';
+                spacer.setAttribute('aria-hidden', 'true');
+                dock.after(spacer);
+                dockSpacers.set(dock, spacer);
+              }
+            } else if (dock.hasAttribute('data-metis-app-empty-dock')) {
+              delete dock.dataset.metisAppEmptyDock;
+              dock.style.removeProperty('--metis-app-composer-shift');
+              dockSpacers.get(dock)?.remove();
+              dockSpacers.delete(dock);
+            }
+          }
         }
         for (const panel of document.querySelectorAll('aside.workspace-surface')) {
           const position = getComputedStyle(panel).position;
@@ -583,6 +656,15 @@ enum MetisAppWebPresentation {
           if (!surface.hasAttribute('data-metis-app-settings-surface')) surface.dataset.metisAppSettingsSurface = '';
           if (!dialog && !surface.hasAttribute('data-metis-app-settings-page')) surface.dataset.metisAppSettingsPage = '';
         }
+        for (const dock of observedDocks) {
+          if (!dock.isConnected) {
+            composerResizeObserver.unobserve(dock);
+            observedDocks.delete(dock);
+            dockSpacers.get(dock)?.remove();
+            dockSpacers.delete(dock);
+          }
+        }
+        updateComposerLayout();
         announceAvailability(Boolean(document.querySelector('[data-metis-app-controls]')));
       };
 
@@ -642,6 +724,9 @@ private final class WorkspaceWebContainer: UIView {
     private var correctingViewportFocusScroll = false
     private var viewportFocusScrollLink: CADisplayLink?
     private var viewportFocusScrollFrames = 0
+    private var keyboardTransitionUntil: CFTimeInterval = 0
+    private var publishedWindowSize: CGSize = .zero
+    private var nativeChatLayoutActive = false
 
 
     init(webView: WKWebView) {
@@ -657,11 +742,19 @@ private final class WorkspaceWebContainer: UIView {
             viewportGuide.trailingAnchor.constraint(equalTo: trailingAnchor),
             viewportGuide.bottomAnchor.constraint(equalTo: keyboardLayoutGuide.topAnchor),
         ])
+        NotificationCenter.default.addObserver(self, selector: #selector(keyboardWillChangeFrame(_:)),
+                                               name: UIResponder.keyboardWillChangeFrameNotification, object: nil)
         webView.accessibilityIdentifier = "metis.webWorkspace"
         addSubview(webView)
         // UIKit/WebKit view geometry changes occur on the main thread. Observe
         // the web process's later content-size/offset update, not just our frame.
         viewportScrollObservations = [
+            webView.observe(\.isLoading, options: [.new]) { [weak self] view, _ in
+                MainActor.assumeIsolated {
+                    if view.isLoading { self?.nativeChatLayoutActive = false }
+                    else { self?.publishWindowGeometry(force: true) }
+                }
+            },
             webView.scrollView.observe(\.contentSize, options: [.new]) { [weak self] _, _ in
                 MainActor.assumeIsolated { self?.reconcileViewportFocusScroll() }
             },
@@ -673,17 +766,33 @@ private final class WorkspaceWebContainer: UIView {
 
     required init?(coder: NSCoder) { return nil }
 
+    @objc private func keyboardWillChangeFrame(_ notification: Notification) {
+        guard window != nil else { return }
+        let duration = (notification.userInfo?[UIResponder.keyboardAnimationDurationUserInfoKey] as? NSNumber)?.doubleValue ?? 0
+        keyboardTransitionUntil = CACurrentMediaTime() + max(0, duration)
+        viewportFocusScrollPending = true
+        publishWindowGeometry(force: true)
+        reconcileViewportFocusScroll()
+    }
+
+    override func didMoveToWindow() {
+        super.didMoveToWindow()
+        if window == nil { finishViewportFocusScroll() }
+        else { publishWindowGeometry(force: true) }
+    }
+
     override func layoutSubviews() {
         super.layoutSubviews()
         let viewport = viewportGuide.layoutFrame
+        publishWindowGeometry()
         guard webView.frame != viewport else {
             reconcileViewportFocusScroll()
             return
         }
         if abs(webView.frame.width - viewport.width) > 0.5 {
             finishViewportFocusScroll()
-        } else if viewport.height < webView.frame.height - 0.5,
-                  keyboardLayoutGuide.layoutFrame.height > 0 {
+        } else if webView.frame.height > 0,
+                  abs(viewport.height - webView.frame.height) > 0.5 {
             viewportFocusScrollPending = true
         }
         // Only the viewport resize is immediate. Keyboard motion, web scrolling
@@ -693,6 +802,29 @@ private final class WorkspaceWebContainer: UIView {
             webView.layoutIfNeeded()
         }
         reconcileViewportFocusScroll()
+    }
+
+    private func publishWindowGeometry(force: Bool = false) {
+        guard let window else { return }
+        let fullWindow = convert(window.bounds, from: window)
+        guard fullWindow.width > 0, fullWindow.height > 0,
+              force || fullWindow.size != publishedWindowSize else { return }
+        publishedWindowSize = fullWindow.size
+        // Numeric presentation geometry only. The stylesheet is scoped to the
+        // decorated first-party shell, and is refreshed after each navigation.
+        let height = Double(fullWindow.height)
+        let homeInset = Double(window.safeAreaInsets.bottom)
+        let page = webView.url
+        webView.evaluateJavaScript("""
+          document.documentElement?.style.setProperty('--metis-app-window-height', '\(height)px');
+          document.documentElement?.style.setProperty('--metis-app-home-inset', '\(homeInset)px');
+          document.dispatchEvent(new Event('metis-native-layout'));
+          Boolean(document.querySelector('html[data-metis-native-app="ios"] .metis-shell [data-metis-app-composer-dock]'));
+          """) { [weak self] value, _ in
+            guard let self, self.webView.url == page, !self.webView.isLoading else { return }
+            self.nativeChatLayoutActive = value as? Bool == true
+            self.reconcileViewportFocusScroll()
+        }
     }
 
     private func reconcileViewportFocusScroll() {
@@ -705,11 +837,13 @@ private final class WorkspaceWebContainer: UIView {
             finishViewportFocusScroll()
             return
         }
-        // A fitted app viewport has no legitimate root scroll range. Longer
-        // documents, custom insets, and deliberate zoom retain WebKit behavior.
+        // A clipped chat shell may retain the full window height while its
+        // visible viewport is shorter. It still has no legitimate root scroll
+        // range. Other pages must fit the visible viewport; longer documents,
+        // custom insets, and deliberate zoom retain WebKit behavior.
         guard scroll.contentInset == .zero, scroll.adjustedContentInset == .zero,
               scroll.contentSize.width <= scroll.bounds.width + 0.5,
-              scroll.contentSize.height <= scroll.bounds.height + 0.5 else { return }
+              scroll.contentSize.height <= (nativeChatLayoutActive ? publishedWindowSize.height : scroll.bounds.height) + 0.5 else { return }
         correctingViewportFocusScroll = true
         UIView.performWithoutAnimation {
             if scroll.contentOffset != .zero {
@@ -736,8 +870,15 @@ private final class WorkspaceWebContainer: UIView {
 
     @objc private func finishViewportFocusScrollFrame(_ link: CADisplayLink) {
         reconcileViewportFocusScroll()
-        viewportFocusScrollFrames -= 1
-        if viewportFocusScrollFrames <= 0 { finishViewportFocusScroll() }
+        // A dismissal can outlast WebKit's initial offset clamp. Continue
+        // through the keyboard's reported transition in either direction,
+        // then allow two display frames for the web process to settle.
+        if CACurrentMediaTime() < keyboardTransitionUntil {
+            viewportFocusScrollFrames = 2
+        } else {
+            viewportFocusScrollFrames -= 1
+            if viewportFocusScrollFrames <= 0 { finishViewportFocusScroll() }
+        }
     }
 
     private func finishViewportFocusScroll() {

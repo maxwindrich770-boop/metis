@@ -582,6 +582,154 @@ final class MetisUITests: XCTestCase {
     }
 
     @MainActor
+    func testSyntheticKeyboardDismissalKeepsChatSteadyAcrossWebAndSystemDismissal() throws {
+        try assertSyntheticKeyboardDismissal(centeredEmptyState: false)
+    }
+
+    @MainActor
+    func testSyntheticKeyboardDismissalKeepsCenteredEmptyStateSteady() throws {
+        try assertSyntheticKeyboardDismissal(centeredEmptyState: true)
+    }
+
+    @MainActor
+    func testSyntheticEmptyComposerFlowKeepsGreetingStableThroughKeyboardCycles() throws {
+        try assertSyntheticKeyboardDismissal(centeredEmptyState: false, productionEmptyState: true)
+    }
+
+    @MainActor
+    private func assertSyntheticKeyboardDismissal(centeredEmptyState: Bool, productionEmptyState: Bool = false) throws {
+        XCUIDevice.shared.orientation = .portrait
+        let app = launch()
+        signIn(app, server: "http://localhost:43100")
+        let web = openSyntheticViewportFixture(in: app, centeredEmptyState: centeredEmptyState,
+                                               productionEmptyState: productionEmptyState)
+        let composer = web.descendants(matching: .any)["Synthetic viewport draft"].firstMatch
+        let header = web.buttons["Open sidebar"]
+        let closedHeader = header.frame
+        var previousRevision = 0
+        var previousOpeningRevision = 0
+        let greeting = web.staticTexts[productionEmptyState
+            ? "Synthetic empty chat greeting" : "Synthetic centered empty state"]
+        let closedGreetingY = centeredEmptyState || productionEmptyState ? greeting.frame.midY : nil
+        let expectedDraft = "Draft stays through repeated keyboard dismissal"
+
+        for (index, kind) in ["blur", "system-done", "blur"].enumerated() {
+            composer.tap()
+            if index == 0 { composer.typeText(expectedDraft) }
+            let inputVisible = XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in
+                guard let geometry = self.observedWindowGeometry(in: app) else { return false }
+                return geometry.availableBottom < geometry.window.maxY - 1
+            }, object: app)
+            XCTAssertEqual(XCTWaiter.wait(for: [inputVisible], timeout: 5), .completed,
+                           "Every cycle must show a real system input surface before dismissal")
+            XCTAssertEqual(composer.value as? String, expectedDraft)
+            let openingPrefix = "Synthetic keyboard transition: "
+            let openingReport = web.staticTexts.matching(NSPredicate(format: "label BEGINSWITH %@", openingPrefix)).firstMatch
+            XCTAssertTrue(openingReport.waitForExistence(timeout: 5))
+            let openingSampled = XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in
+                guard let data = String(openingReport.label.dropFirst(openingPrefix.count)).data(using: .utf8),
+                      let measured = try? JSONDecoder().decode(SyntheticKeyboardTransition.self, from: data)
+                else { return false }
+                return measured.revision > previousOpeningRevision
+            }, object: openingReport)
+            XCTAssertEqual(XCTWaiter.wait(for: [openingSampled], timeout: 5), .completed)
+            let openingData = try XCTUnwrap(String(openingReport.label.dropFirst(openingPrefix.count)).data(using: .utf8))
+            let opening = try JSONDecoder().decode(SyntheticKeyboardTransition.self, from: openingData)
+            previousOpeningRevision = opening.revision
+            XCTAssertLessThanOrEqual(opening.headerTopRange, 2)
+            XCTAssertLessThanOrEqual(opening.transcriptScrollRange, 2)
+            XCTAssertLessThanOrEqual(opening.documentScrollRange, 2)
+            XCTAssertLessThanOrEqual(opening.maxShellHeightError, 2)
+            if let closedGreetingY {
+                XCTAssertLessThanOrEqual(try XCTUnwrap(opening.emptyCenterYRange), 2,
+                                        "Opening the keyboard must leave the greeting stationary")
+                XCTAssertEqual(greeting.frame.midY, closedGreetingY, accuracy: 2)
+            }
+            if productionEmptyState {
+                let metrics = try viewportMetrics(in: web)
+                XCTAssertTrue(metrics.productionEmptyState)
+                XCTAssertTrue(metrics.composerServerFixed,
+                              "The fixture must reproduce the server's focused fixed-position class")
+                XCTAssertEqual(metrics.composerPosition, "relative",
+                               "Native app styling must preserve the empty dock's normal-flow footprint")
+                try assertSyntheticEmptyComposerClearance(in: app, web: web)
+            }
+            let openingAttachment = XCTAttachment(string: openingReport.label)
+            openingAttachment.name = "synthetic-keyboard-opening-\(index)-\(kind)"
+            openingAttachment.lifetime = .keepAlways
+            add(openingAttachment)
+            capture(app, named: "synthetic-fixture-keyboard-cycle-\(index)-before-\(kind)")
+
+            if kind == "system-done" {
+                let arm = web.buttons["Arm native Done dismissal probe"]
+                XCTAssertTrue(arm.isHittable, app.debugDescription)
+                arm.tap()
+                let done = app.toolbars.buttons["Done"].firstMatch
+                XCTAssertTrue(done.waitForExistence(timeout: 5),
+                              "This cycle requires the real system input accessory's Done button")
+                XCTAssertTrue(done.isHittable, app.debugDescription)
+                done.tap()
+            } else {
+                let dismiss = web.buttons["Blur composer and dismiss keyboard"]
+                XCTAssertTrue(dismiss.isHittable, app.debugDescription)
+                dismiss.tap()
+            }
+            let prefix = "Synthetic keyboard dismissal: "
+            let report = web.staticTexts.matching(NSPredicate(format: "label BEGINSWITH %@", prefix)).firstMatch
+            XCTAssertTrue(report.waitForExistence(timeout: 5))
+            let sampled = XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in
+                guard let data = String(report.label.dropFirst(prefix.count)).data(using: .utf8),
+                      let measured = try? JSONDecoder().decode(SyntheticKeyboardDismissal.self, from: data)
+                else { return false }
+                return measured.revision > previousRevision && measured.kind == kind
+            }, object: report)
+            XCTAssertEqual(XCTWaiter.wait(for: [sampled], timeout: 5), .completed)
+            let data = try XCTUnwrap(String(report.label.dropFirst(prefix.count)).data(using: .utf8))
+            let transition = try JSONDecoder().decode(SyntheticKeyboardDismissal.self, from: data)
+            previousRevision = transition.revision
+
+            // DOM ranges complement the native layer/video check; they do not
+            // substitute for it, because WebKit can animate its entire surface.
+            XCTAssertGreaterThanOrEqual(transition.frames, 18)
+            XCTAssertGreaterThanOrEqual(transition.duration, 900)
+            XCTAssertGreaterThan(transition.offsetWrites, 1)
+            XCTAssertLessThanOrEqual(transition.headerTopRange, 2)
+            XCTAssertLessThanOrEqual(transition.headerBottomRange, 2)
+            XCTAssertLessThanOrEqual(transition.transcriptScrollRange, 2)
+            XCTAssertLessThanOrEqual(transition.documentScrollRange, 2)
+            XCTAssertLessThanOrEqual(transition.composerCenterXRange, 2)
+            XCTAssertLessThanOrEqual(transition.viewportScaleRange, 0.001)
+            XCTAssertLessThanOrEqual(transition.maxDockBottom, 1,
+                                    "Late closing-offset writes must not lift the dock after blur")
+            if centeredEmptyState || productionEmptyState {
+                XCTAssertLessThanOrEqual(try XCTUnwrap(transition.emptyCenterYRange), 2,
+                                        "The centered background must not fly while the keyboard collapses")
+            }
+            let dismissed = XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in
+                guard let geometry = self.observedWindowGeometry(in: app) else { return false }
+                return geometry.availableBottom >= geometry.window.maxY - 1
+            }, object: app)
+            XCTAssertEqual(XCTWaiter.wait(for: [dismissed], timeout: 8), .completed,
+                           "The input surface must actually leave the window after dismissal")
+            XCTAssertEqual(header.frame.minY, closedHeader.minY, accuracy: 2)
+            XCTAssertEqual(composer.value as? String, expectedDraft)
+            if let closedGreetingY { XCTAssertEqual(greeting.frame.midY, closedGreetingY, accuracy: 2) }
+            if productionEmptyState {
+                let metrics = try viewportMetrics(in: web)
+                XCTAssertEqual(metrics.composerPosition, "relative")
+                XCTAssertFalse(metrics.composerServerFixed,
+                               "Every new cycle performs a real blur; readonly-retained focus is covered separately")
+                try assertSyntheticEmptyComposerClearance(in: app, web: web)
+            }
+            let attachment = XCTAttachment(string: report.label)
+            attachment.name = "synthetic-keyboard-dismissal-\(index)-\(kind)"
+            attachment.lifetime = .keepAlways
+            add(attachment)
+            capture(app, named: "synthetic-fixture-keyboard-cycle-\(index)-after-\(kind)")
+        }
+    }
+
+    @MainActor
     func testSyntheticViewportFixtureFillsWindowWithFocusedAndDismissedKeyboard() throws {
         XCUIDevice.shared.orientation = .portrait
         defer { XCUIDevice.shared.orientation = .portrait }
@@ -796,6 +944,8 @@ final class MetisUITests: XCTestCase {
     }
 
     private struct SyntheticKeyboardTransition: Decodable {
+        let revision: Int
+        let emptyCenterYRange: Double?
         let frames: Int
         let duration: Double
         let headerTopRange: Double
@@ -804,6 +954,22 @@ final class MetisUITests: XCTestCase {
         let documentScrollRange: Double
         let maxShellHeightError: Double
         let dockOffsetAttempts: Int
+    }
+
+    private struct SyntheticKeyboardDismissal: Decodable {
+        let revision: Int
+        let kind: String
+        let frames: Int
+        let duration: Double
+        let offsetWrites: Int
+        let headerTopRange: Double
+        let headerBottomRange: Double
+        let transcriptScrollRange: Double
+        let documentScrollRange: Double
+        let composerCenterXRange: Double
+        let maxDockBottom: Double
+        let viewportScaleRange: Double
+        let emptyCenterYRange: Double?
     }
 
     private struct SyntheticViewportMetrics: Decodable {
@@ -820,6 +986,10 @@ final class MetisUITests: XCTestCase {
         let sidebarBrandTop: Double
         let sidebarCloseTop: Double
         let composerDockBottom: Double
+        let composerPosition: String
+        let composerServerFixed: Bool
+        let productionEmptyState: Bool
+        let emptyCenterY: Double?
         let composerBottom: Double
         let composerCenterX: Double
         let composerFontSize: Double
@@ -937,10 +1107,12 @@ final class MetisUITests: XCTestCase {
     }
 
     @MainActor
-    private func openSyntheticViewportFixture(in app: XCUIApplication, contentEditableComposer: Bool = false) -> XCUIElement {
+    private func openSyntheticViewportFixture(in app: XCUIApplication, contentEditableComposer: Bool = false,
+                                               centeredEmptyState: Bool = false, productionEmptyState: Bool = false) -> XCUIElement {
         let web = authenticatedWebWorkspace(in: app)
-        let openFixture = web.links[contentEditableComposer
-            ? "Open synthetic contenteditable composer fixture" : "Open synthetic viewport fixture"]
+        let openFixture = web.links[productionEmptyState ? "Open synthetic empty composer flow fixture"
+            : (centeredEmptyState ? "Open synthetic centered empty-state fixture"
+               : (contentEditableComposer ? "Open synthetic contenteditable composer fixture" : "Open synthetic viewport fixture"))]
         reveal(openFixture, in: app)
         openFixture.tap()
         XCTAssertTrue(web.staticTexts["Synthetic viewport fixture"].waitForExistence(timeout: 10))
@@ -1057,8 +1229,8 @@ final class MetisUITests: XCTestCase {
         let metrics = try freshViewportMetrics(in: app, web: web)
         let composer = web.descendants(matching: .any)["Synthetic viewport draft"].firstMatch
         let clearance = CGFloat(max(4, metrics.safeAreaBottom))
-        XCTAssertEqual(metrics.shellHeight, metrics.height, accuracy: 2,
-                       "Status-bar padding must stay inside the border-box root height", file: file, line: line)
+        XCTAssertEqual(metrics.shellHeight, Double(geometry.window.height), accuracy: 2,
+                       "The shell keeps the full native-window layout height while only WebKit is clipped above input", file: file, line: line)
         XCTAssertEqual(metrics.headerTop, metrics.safeAreaTop, accuracy: 2,
                        "In-flow header content must clear exactly one CSS status-bar inset", file: file, line: line)
         if let nativeStatusBarBottom = geometry.statusBarBottom {
@@ -1075,9 +1247,24 @@ final class MetisUITests: XCTestCase {
     }
 
     @MainActor
+    private func assertSyntheticEmptyComposerClearance(in app: XCUIApplication, web: XCUIElement) throws {
+        let geometry = try XCTUnwrap(observedWindowGeometry(in: app))
+        let metrics = try viewportMetrics(in: web)
+        let composer = web.descendants(matching: .any)["Synthetic viewport draft"].firstMatch
+        let clearance = max(4, metrics.safeAreaBottom)
+        XCTAssertEqual(metrics.shellHeight, Double(geometry.window.height), accuracy: 2)
+        XCTAssertLessThanOrEqual(Double(web.frame.minY) + metrics.composerBottom,
+                                 Double(geometry.availableBottom) - clearance + 2,
+                                 "The empty dock may move upward only enough to clear the actual input surface")
+        XCTAssertLessThanOrEqual(composer.frame.maxY, geometry.availableBottom - CGFloat(clearance) + 2)
+        XCTAssertGreaterThanOrEqual(composer.frame.minY, geometry.statusBarBottom ?? geometry.window.minY)
+        XCTAssertTrue(composer.isHittable, app.debugDescription)
+    }
+
+    @MainActor
     private func assertSyntheticWorkspaceClearance(in app: XCUIApplication, web: XCUIElement) throws {
         let open = web.buttons["Open synthetic workspace panel"]
-        reveal(open, in: app)
+        revealSyntheticControl(open, in: web)
         open.tap()
         let bottomControl = web.buttons["Synthetic workspace bottom control"]
         XCTAssertTrue(bottomControl.waitForExistence(timeout: 5))

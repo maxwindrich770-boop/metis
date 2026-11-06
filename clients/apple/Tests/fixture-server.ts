@@ -40,6 +40,8 @@ function webWorkspaceFixture(username: string, cookieName: string, externalAddre
     <button id="logout">Sign out from the web fixture</button>
     <a href="/?fixture=viewport">Open synthetic viewport fixture</a>
     <a href="/?fixture=composer-zoom">Open synthetic contenteditable composer fixture</a>
+    <a href="/?fixture=viewport-empty">Open synthetic centered empty-state fixture</a>
+    <a href="/?fixture=viewport-empty-flow">Open synthetic empty composer flow fixture</a>
     <a href="/?fixture=model-preferences">Open synthetic model preference storage fixture</a>
     <p id="error" role="alert"></p>
   </main>
@@ -148,7 +150,7 @@ function webModelPreferenceFixture() {
 
 // Production-like geometry, deliberately SYNTHETIC: this validates the app/web
 // viewport boundary and sidebar bridge, never the production Metis design.
-function webViewportFixture(username: string, contentEditableComposer = false) {
+function webViewportFixture(username: string, contentEditableComposer = false, centeredEmptyState = false, productionEmptyState = false) {
   const expectedUsername = JSON.stringify(username).replaceAll("<", "\\u003c");
   return `<!doctype html>
 <html lang="en">
@@ -169,12 +171,21 @@ function webViewportFixture(username: string, contentEditableComposer = false) {
     header { flex: none; display: flex; flex-wrap: wrap; align-items: center; gap: 8px; padding: 8px 12px; border-bottom: 1px solid #cccfc3; background: var(--popover); }
     header strong { flex: 1; }
     #dismiss-keyboard { flex-basis: 100%; }
+    #centered-empty-state { position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%); pointer-events: none; max-width: 80%; margin: 0; }
     #transcript { flex: 1; overflow: auto; min-height: 0; padding: 12px 16px 160px; overscroll-behavior: contain; }
     #transcript p { margin: 8px 0; }
     #viewport-metrics, #workspace-metrics, #page-instance { font-size: 11px; overflow-wrap: anywhere; }
     #focus-state { overflow-wrap: anywhere; }
     #composer-footer { position: absolute; inset: auto 0 0; padding: 12px 12px max(4px, env(safe-area-inset-bottom)); background: var(--background); }
     #composer { display: flex; align-items: end; gap: 8px; }
+    #empty-chat-layout { position: relative; display: flex; flex: 1; min-height: 0; flex-direction: column; justify-content: center; padding-bottom: 10svh; }
+    #empty-chat-layout > div { display: flex; flex: none; flex-direction: column; align-items: center; padding-inline: 16px; }
+    #flow-empty-state { font-size: 28px; line-height: 1.2; margin: 0 0 20px; }
+    #composer-footer.relative { position: relative; width: 100%; max-width: 672px; margin-inline: auto; }
+    #composer-footer[class~="max-md:fixed"] { position: fixed; inset-inline: 0; bottom: 0; }
+    body[data-empty-flow] #transcript { position: absolute; inset: 0; padding: 6px; overflow: auto; font-size: 8px; line-height: 10px; opacity: 0.2; pointer-events: none; z-index: 0; }
+    body[data-empty-flow] #transcript button, body[data-empty-flow] #transcript a { display: none; }
+    body[data-empty-flow] #empty-chat-layout { z-index: 1; }
     /* Same class-level baseline as production; the app must prevent focus zoom. */
     .composer-input-area { font-size: 15px; }
     #draft { flex: 1; min-width: 0; height: 68px; margin: 0; padding: 12px; border: 1px solid #74766c; border-radius: 18px; color: inherit; background: var(--popover); resize: none; overflow: auto; }
@@ -193,17 +204,20 @@ function webViewportFixture(username: string, contentEditableComposer = false) {
   <div id="viewport" class="metis-shell">
     <header>
       <button id="open-sidebar" aria-label="Open sidebar" aria-expanded="false">Chats</button>
+      <button id="open-workspace" aria-label="Open synthetic workspace panel">Workspace</button>
       <strong>SYNTHETIC viewport fixture</strong>
       <button id="measure-viewport">Measure viewport geometry</button>
       <button id="dismiss-keyboard">Dismiss keyboard, keep composer focus</button>
+      <button id="blur-keyboard" aria-label="Blur composer and dismiss keyboard">Blur</button>
+      <button id="arm-system-dismissal" aria-label="Arm native Done dismissal probe">Arm Done</button>
     </header>
     <main id="transcript" aria-label="Synthetic scrolling transcript">
       <h1>Synthetic viewport fixture</h1>
-      <button id="open-workspace">Open synthetic workspace panel</button>
       <p>Integration geometry only. This is not the Metis web design.</p>
       <p id="session-state" role="status">Checking viewport fixture session…</p>
       <p id="focus-state" role="status">Composer is not focused</p>
       <p id="keyboard-transition" role="status">Synthetic keyboard transition not sampled</p>
+      <p id="keyboard-dismissal" role="status">Synthetic keyboard dismissal not sampled</p>
       <p id="page-instance"></p>
       <p id="viewport-metrics" role="status"></p>
       <button id="check-session">Check viewport fixture session</button>
@@ -215,6 +229,7 @@ function webViewportFixture(username: string, contentEditableComposer = false) {
       <p id="error" role="alert"></p>
       ${Array.from({ length: 12 }, (_, index) => `<p>Synthetic transcript row ${index + 1} — scroll content keeps the footer separate from the transcript.</p>`).join("")}
     </main>
+    ${centeredEmptyState ? '<h2 id="centered-empty-state">Synthetic centered empty state</h2>' : ""}
     <footer id="composer-footer" class="pointer-events-none z-20 w-full">
       <form id="composer" aria-label="Synthetic web composer">
         ${contentEditableComposer
@@ -249,11 +264,30 @@ function webViewportFixture(username: string, contentEditableComposer = false) {
     const draft = element("draft");
     const sidebar = document.querySelector('aside[aria-label="Chats sidebar"]');
     const workspace = element("synthetic-workspace");
+    const productionEmptyState = ${productionEmptyState};
+    if (productionEmptyState) {
+      document.body.dataset.emptyFlow = "true";
+      const layout = document.createElement("div");
+      layout.id = "empty-chat-layout";
+      layout.className = "relative flex min-h-0 flex-1 flex-col justify-center pb-[10svh] sm:pb-8";
+      const group = document.createElement("div");
+      group.className = "flex shrink-0 flex-col items-center px-4";
+      const greeting = document.createElement("h2");
+      greeting.id = "flow-empty-state";
+      greeting.textContent = "Synthetic empty chat greeting";
+      group.append(greeting);
+      const dock = element("composer-footer");
+      dock.classList.add("relative", "mx-auto", "max-w-2xl", "px-4");
+      layout.append(group, dock);
+      element("transcript").before(layout);
+    }
+    const emptyRect = () => (element("flow-empty-state") || element("centered-empty-state"))?.getBoundingClientRect();
     let revision = 0;
     let measurementRevision = 0;
     let draftHasBeenFocused = false;
     let retainedFocusRequested = false;
     let retainedFocusVerified = false;
+    let systemDismissalArmed = false;
     const fail = error => { element("error").textContent = String(error.message || error); };
     element("page-instance").textContent = "Synthetic page instance: " + crypto.randomUUID();
     async function verifySession() {
@@ -283,7 +317,11 @@ function webViewportFixture(username: string, contentEditableComposer = false) {
         sidebarHeight: sidebar.getBoundingClientRect().height,
         sidebarBrandTop: sidebar.querySelector('[aria-label="Metis"]').getBoundingClientRect().top,
         sidebarCloseTop: element("close-sidebar").getBoundingClientRect().top,
-        composerDockBottom: parseFloat(getComputedStyle(element("composer-footer")).bottom),
+        composerDockBottom: parseFloat(getComputedStyle(element("composer-footer")).bottom) || 0,
+        composerPosition: getComputedStyle(element("composer-footer")).position,
+        composerServerFixed: element("composer-footer").classList.contains("max-md:fixed"),
+        productionEmptyState,
+        emptyCenterY: emptyRect() ? (emptyRect().top + emptyRect().bottom) / 2 : null,
         composerBottom: draft.getBoundingClientRect().bottom,
         composerCenterX: (element("composer").getBoundingClientRect().left + element("composer").getBoundingClientRect().right) / 2,
         composerFontSize: parseFloat(getComputedStyle(draft).fontSize),
@@ -308,8 +346,17 @@ function webViewportFixture(username: string, contentEditableComposer = false) {
     // Record the transition from the trusted touch before focus starts. This
     // measures DOM geometry every frame rather than only its settled endpoint.
     let transitionRevision = 0;
+    let dismissalRevision = 0;
+    let dismissalOffsetRevision = 0;
     let dockOffsetAttempts = 0;
     draft.addEventListener("pointerdown", () => {
+      if (draft.readOnly) {
+        draft.readOnly = false;
+        draft.blur();
+        draft.focus({ preventScroll: true });
+      }
+      retainedFocusRequested = false;
+      retainedFocusVerified = false;
       const revision = ++transitionRevision;
       const started = performance.now();
       const samples = [];
@@ -319,7 +366,9 @@ function webViewportFixture(username: string, contentEditableComposer = false) {
         samples.push({
           headerTop: header.top, headerBottom: header.bottom,
           transcriptScrollTop: element("transcript").scrollTop, documentScrollY: scrollY,
-          shellHeightDelta: element("viewport").getBoundingClientRect().height - innerHeight,
+          shellHeightDelta: element("viewport").getBoundingClientRect().height -
+            (parseFloat(getComputedStyle(document.documentElement).getPropertyValue("--metis-app-window-height")) || innerHeight),
+          emptyCenterY: emptyRect() ? (emptyRect().top + emptyRect().bottom) / 2 : null,
         });
         if (now - started < 700 || samples.length < 12) { requestAnimationFrame(sample); return; }
         const range = key => Math.max(...samples.map(item => item[key])) - Math.min(...samples.map(item => item[key]));
@@ -329,12 +378,15 @@ function webViewportFixture(username: string, contentEditableComposer = false) {
           transcriptScrollRange:range("transcriptScrollTop"), documentScrollRange:range("documentScrollY"),
           maxShellHeightError:Math.max(...samples.map(item=>Math.abs(item.shellHeightDelta))),
           dockOffsetAttempts,
+          emptyCenterYRange: emptyRect() ? range("emptyCenterY") : null,
         });
+        updateMetrics();
       }
       sample(started);
     });
     draft.addEventListener("focus", () => {
       draftHasBeenFocused = true;
+      if (productionEmptyState) element("composer-footer").classList.add("max-md:fixed", "max-md:inset-x-0", "max-md:z-30");
       // Mirror the real web dock's transient keyboard-offset writes. The app's
       // first-party override must prevent this second subtraction of the IME.
       dockOffsetAttempts = 0;
@@ -346,7 +398,14 @@ function webViewportFixture(username: string, contentEditableComposer = false) {
       }
       writeTransientOffset();
     });
-    draft.addEventListener("blur", () => { element("composer-footer").style.bottom = "0px"; });
+    draft.addEventListener("blur", () => {
+      if (systemDismissalArmed) {
+        systemDismissalArmed = false;
+        sampleKeyboardDismissal("system-done");
+      }
+      element("composer-footer").style.bottom = "0px";
+      if (productionEmptyState) element("composer-footer").classList.remove("max-md:fixed", "max-md:inset-x-0", "max-md:z-30");
+    });
     for (const event of ["focus", "blur", "input"]) draft.addEventListener(event, scheduleMetrics);
     window.addEventListener("resize", scheduleMetrics);
     window.visualViewport?.addEventListener("resize", scheduleMetrics);
@@ -364,6 +423,58 @@ function webViewportFixture(username: string, contentEditableComposer = false) {
     element("measure-viewport").addEventListener("click", measureGeometry);
     element("measure-workspace").addEventListener("click", measureGeometry);
     element("measure-sidebar").addEventListener("click", measureGeometry);
+    function sampleKeyboardDismissal(kind) {
+      const revision = ++dismissalRevision;
+      const offsetRevision = ++dismissalOffsetRevision;
+      const started = performance.now();
+      const samples = [];
+      let writes = 0;
+      // Mirror late visualViewport writes after focus has already left the field.
+      // Sampling only focus or a settled endpoint misses this production path.
+      function writeClosingOffset() {
+        if (offsetRevision !== dismissalOffsetRevision) return;
+        element("composer-footer").style.bottom = (120 * Math.max(0, 1 - writes / 18)) + "px";
+        writes++;
+        if (writes <= 18) requestAnimationFrame(writeClosingOffset);
+      }
+      function sample(now) {
+        if (revision !== dismissalRevision) return;
+        const header = document.querySelector("header").getBoundingClientRect();
+        const empty = emptyRect();
+        const composer = element("composer").getBoundingClientRect();
+        samples.push({
+          headerTop: header.top, headerBottom: header.bottom,
+          transcriptScrollTop: element("transcript").scrollTop, documentScrollY: scrollY,
+          composerCenterX: (composer.left + composer.right) / 2,
+          dockBottom: parseFloat(getComputedStyle(element("composer-footer")).bottom) || 0,
+          viewportScale: window.visualViewport?.scale || 1,
+          emptyCenterY: empty ? (empty.top + empty.bottom) / 2 : null,
+        });
+        if (now - started < 900 || samples.length < 18) { requestAnimationFrame(sample); return; }
+        const range = key => Math.max(...samples.map(item => item[key])) - Math.min(...samples.map(item => item[key]));
+        element("keyboard-dismissal").textContent = "Synthetic keyboard dismissal: " + JSON.stringify({
+          revision, kind, frames: samples.length, duration: now - started, offsetWrites: writes,
+          headerTopRange: range("headerTop"), headerBottomRange: range("headerBottom"),
+          transcriptScrollRange: range("transcriptScrollTop"), documentScrollRange: range("documentScrollY"),
+          composerCenterXRange: range("composerCenterX"),
+          maxDockBottom: Math.max(...samples.map(item => Math.abs(item.dockBottom))),
+          viewportScaleRange: range("viewportScale"),
+          emptyCenterYRange: empty ? range("emptyCenterY") : null,
+        });
+        updateMetrics();
+      }
+      sample(started);
+      requestAnimationFrame(writeClosingOffset);
+    }
+    for (const [id,kind] of [["dismiss-keyboard","retained-focus"],["blur-keyboard","blur"]]) {
+      element(id).addEventListener("pointerdown", () => sampleKeyboardDismissal(kind));
+    }
+    // The web action only arms sampling. The real native Done button must
+    // blur the draft before the system-dismissal probe can start.
+    element("arm-system-dismissal").addEventListener("mousedown", event => event.preventDefault());
+    element("arm-system-dismissal").addEventListener("click", () => { systemDismissalArmed = true; });
+    element("blur-keyboard").addEventListener("mousedown", event => event.preventDefault());
+    element("blur-keyboard").addEventListener("click", () => { draft.blur(); scheduleMetrics(); });
     element("dismiss-keyboard").addEventListener("mousedown", event => event.preventDefault());
     element("dismiss-keyboard").addEventListener("click", () => {
       // Explicitly focus the real readonly textarea after the trusted action.
@@ -602,8 +713,8 @@ async function main() {
         const account = getAuthenticatedCookieUser(request);
         const externalAddress = url.origin.replace("localhost", "127.0.0.1") + "/fixture-external";
         const fixture = url.searchParams.get("fixture");
-        const html = account && (fixture === "viewport" || fixture === "composer-zoom"
-          ? webViewportFixture(account.username, fixture === "composer-zoom")
+        const html = account && (fixture === "viewport" || fixture === "composer-zoom" || fixture === "viewport-empty" || fixture === "viewport-empty-flow"
+          ? webViewportFixture(account.username, fixture === "composer-zoom", fixture === "viewport-empty", fixture === "viewport-empty-flow")
           : fixture === "model-preferences" ? webModelPreferenceFixture()
           : fixture === "app-controls-subframe" ? webAppControlsSubframeFixture()
           : webWorkspaceFixture(account.username, CHAT_COOKIE, externalAddress));
