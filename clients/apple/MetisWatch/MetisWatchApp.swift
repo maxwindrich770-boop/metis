@@ -132,12 +132,13 @@ private struct WatchChats: View {
     @ObservedObject var relay: PhoneConnection
     @State private var chats: [WatchChat] = []
     @State private var notice: String?
-    @State private var path: [WatchChat] = []
+    @State private var selectedChatID: String?
     @State private var lastSync: Date?
     @State private var creating = false
 
     var body: some View {
-        NavigationStack(path: $path) {
+        // NavigationStack requires watchOS 9; this stack also supports watchOS 8.
+        NavigationView {
             List {
                 if let notice { Text(notice).font(.footnote) }
                 let pending = chats.filter(\.needsAttention)
@@ -155,27 +156,27 @@ private struct WatchChats: View {
                 Button("Refresh", systemImage: "arrow.clockwise") { Task { await refresh() } }
             }
             .navigationTitle("Metis")
-            .navigationDestination(for: WatchChat.self) { WatchPrompt(chat: $0, relay: relay) }
         }
         .task(id: "\(relay.reachable):\(relay.sessionRevision)") {
             if relay.reachable && relay.sessionAvailable != false { await refresh() }
             else {
                 chats = []
-                path = []
+                selectedChatID = nil
                 notice = relay.sessionAvailable == false
                     ? "Sign in and enable Watch access in Metis on your iPhone."
                     : RelayError.unavailable.localizedDescription
             }
         }
-        .onChange(of: relay.sessionRevision) { _, _ in
+        .onChange(of: relay.sessionRevision) { _ in
             chats = []
-            path = []
+            selectedChatID = nil
             lastSync = nil
         }
     }
 
     private func chatLink(_ chat: WatchChat) -> some View {
-        NavigationLink(value: chat) {
+        NavigationLink(destination: WatchPrompt(chat: chat, relay: relay),
+                       tag: chat.id, selection: $selectedChatID) {
             VStack(alignment: .leading) {
                 Text(chat.title)
                 Text(chat.status.replacingOccurrences(of: "_", with: " ").capitalized).font(.caption)
@@ -191,7 +192,7 @@ private struct WatchChats: View {
             let chat = try await relay.createChat()
             guard relay.reachable, relay.sessionAvailable != false else { return }
             if !chats.contains(where: { $0.id == chat.id }) { chats.insert(chat, at: 0) }
-            path.append(chat)
+            selectedChatID = chat.id
         } catch { notice = error.localizedDescription }
     }
 
@@ -203,7 +204,7 @@ private struct WatchChats: View {
             lastSync = Date()
             notice = nil
         } catch {
-            if !Task.isCancelled { chats = []; path = []; notice = error.localizedDescription }
+            if !Task.isCancelled { chats = []; selectedChatID = nil; notice = error.localizedDescription }
         }
     }
 }
@@ -233,7 +234,7 @@ private struct WatchPrompt: View {
                 Section("Question") { Text(question) }
             }
             TextField("Prompt", text: $draft)
-                .onChange(of: draft) { _, _ in if !busy { messageID = UUID().uuidString } }
+                .onChange(of: draft) { _ in if !busy { messageID = UUID().uuidString } }
                 .disabled(busy)
             Button("Send", systemImage: "arrow.up.circle") { confirmation = true }
                 .disabled(busy || !relay.reachable || pending?.approvalID != nil || pending?.question != nil ||

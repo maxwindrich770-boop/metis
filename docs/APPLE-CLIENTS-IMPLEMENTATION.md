@@ -134,24 +134,69 @@ The server requires the current approval version and uses the existing
 atomic transition. Biometrics are a phone UI control. They do not prove
 device authentication to the server. A stale/repeated decision is rejected.
 
-## Apple Watch Series 3 gate
+## watchOS 8 and Apple Watch Series 3
 
-Apple lists Series 3 through watchOS 8.8.1. Installed Xcode 27.2 supports
-deployment targets from watchOS 9. Xcode 26.6 lists watchOS 8 deployment and
-the watchOS 26.5 SDK. As of 5 November 2026, Apple lists Xcode 26 and the
-watchOS 26 SDK as the minimum for App Store Connect uploads. Therefore Xcode
-26.6 is a candidate for a legacy spike, subject to installation, signing,
-actual pairing and a successful archive/upload validation. Xcode 27.2 cannot
-validate a watchOS 8 release. No legacy toolchain or paired Series 3 was tested.
-Sources: [Apple Watch compatibility](https://support.apple.com/en-us/118490),
-[Xcode requirements](https://developer.apple.com/xcode/system-requirements/),
-[App Store Connect requirements](https://developer.apple.com/news/upcoming-requirements/).
+The Watch target now declares a minimum of watchOS 8.0. It uses
+`NavigationView` with ID-tagged, selection-based `NavigationLink` instead of
+the watchOS 9 `NavigationStack` APIs. Creating a chat selects its ID; losing
+phone reachability, revoking Watch access or changing the phone session
+clears that selection with the cached chat list. The two-argument
+`onChange` calls are replaced by the watchOS 7-compatible single-value
+overload. SwiftUI tasks and confirmation dialogs keep the minimum at
+watchOS 8 rather than 7.
 
-Keep native Series 3 support provisional. If the legacy gate fails, use a
-modern Watch target and test iPhone notification mirroring on a paired
-Series 3 as the fallback. Mirroring depends on the phone/watch lock state and
-notification settings. It provides alerts with platform-controlled behavior,
-without promising the native Watch experience. [Apple Watch notification routing](https://support.apple.com/en-us/108369).
+The WatchConnectivity request/response contract and session-revision check
+are unchanged. Sending still uses the iPhone's authenticated API and server
+model validation; approval denial still requires the current approval ID,
+version and server acknowledgement. The Watch cannot approve a tool action.
+No server credentials or provider defaults are introduced on the Watch.
+
+The existing single-target app, `WKApplication` property and companion
+bundle ID remain in place. Both Watch build configurations inherit
+`MetisWatch.xcconfig`; no project-file override or target restructuring is
+needed for this source change. Apple's current symbol documentation lists
+`NavigationView` and `WKApplication` from watchOS 7, and the selected
+`NavigationLink` initializer from watchOS 6:
+[NavigationView](https://developer.apple.com/documentation/swiftui/navigationview),
+[selection-based NavigationLink](https://developer.apple.com/documentation/swiftui/navigationlink/init(destination:tag:selection:label:)),
+[onChange](https://developer.apple.com/documentation/swiftui/view/onchange(of:perform:)),
+[WKApplication](https://developer.apple.com/documentation/bundleresources/information-property-list/wkapplication).
+
+### Verification boundaries
+
+Apple Watch Series 3 supports watchOS 8.8.1. Declaring 8.0 and removing newer
+source APIs is the compatibility implementation; it is not evidence that
+the app ran on Series 3 or an 8.x simulator. Xcode 27.2 lists a newer supported
+deployment range. Its requested watchOS 8.3 arm64 simulator download returned
+“not available for download”; watchOS 27.2 downloaded successfully. A test
+on that newer runtime must be reported as such. See
+[Apple Watch compatibility](https://support.apple.com/en-us/118490) and
+[Xcode requirements](https://developer.apple.com/xcode/system-requirements/).
+
+For simulator acceptance, build the **MetisWatch** scheme and inspect the
+result's `MinimumOSVersion` and executable deployment metadata. Record
+warnings from a toolchain that excludes 8.x from its supported range. Do not
+change the target to 9 or 10 to silence those warnings. Then verify:
+
+- Opening an existing chat, returning with Back, and creating a new chat
+  that opens its prompt screen immediately.
+- Prompt entry and confirmation; cancellation sends nothing; an acknowledged
+  prompt clears the draft, and a failed attempt retains its submission ID.
+- Unreachable phone, signed-out phone and Watch access disabled. Revoking
+  access or changing accounts while a prompt is open clears navigation and
+  cached account content.
+- Pending question/approval display, phone handoff and confirmed denial.
+  The iPhone must still reject stale approval versions.
+- Compact Watch dimensions, larger text and reachability changes during
+  navigation. Use a paired simulator only where WatchConnectivity is
+  supported, and identify any relay scenarios the simulator cannot exercise.
+
+Before claiming watchOS 8 runtime compatibility, repeat the applicable
+checks with an installed 8.x runtime and a supporting toolchain. Physical
+Series 3 pairing, dictation and notification mirroring are separate hardware
+acceptance steps; the current operator scope is simulators only. App Store
+SDK/submission requirements are a separate release gate and are not proven
+by a simulator build.
 
 ## Verification and handoff
 

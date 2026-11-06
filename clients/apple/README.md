@@ -2,7 +2,7 @@
 
 Open `MetisApple.xcodeproj`, select the shared **Metis** scheme and choose an
 iPhone running iOS 17 or later. The scheme embeds the Share Extension and the
-watchOS 10+ companion. For signed builds, follow the
+watchOS 8+ companion. For signed builds, follow the
 [signing and provisioning steps](../../docs/APPSTORE-RELEASE-CHECKLIST.md).
 
 Enter the canonical HTTPS origin of a configured Metis server, such as
@@ -24,6 +24,31 @@ the iPhone.
 Share links or text to Metis from the system share sheet, then open Metis to
 review the draft. In a chat, use **Attach** to choose files, photos or camera
 images. Metis uploads only when you tap **Send**.
+
+## watchOS 8 compatibility
+
+The Watch target declares `WATCHOS_DEPLOYMENT_TARGET = 8.0`. Its navigation
+uses `NavigationView` and selection-based `NavigationLink`, and its change
+handlers use the single-value `onChange` overload. The minimum is watchOS 8
+because the UI uses SwiftUI `task` and confirmation dialogs. The Watch
+continues to relay requests through an unlocked, signed-in iPhone with
+**Allow Apple Watch access** enabled. It stores no server credentials.
+
+Use the shared **MetisWatch** scheme for simulator builds. Check chat opening
+and Back, creating a chat and opening it immediately, prompt confirmation,
+retry after a lost connection, pending requests and confirmed denial. Disable
+Watch access or sign out on the paired iPhone while a prompt is open: the
+Watch must clear the old account's chats and return to the root. Watch
+Simulator availability does not prove watchOS 8 runtime compatibility;
+record the actual runtime and the built app's minimum OS separately.
+
+Xcode 27.2 could not download the requested watchOS 8.3 arm64 simulator
+runtime; the available watchOS 27.2 runtime is a separate current-OS check.
+A toolchain/runtime that supports watchOS 8 is still needed for the legacy
+runtime acceptance test. Do not raise the deployment target merely to remove
+a newer Xcode support-range warning. See the
+[Watch compatibility notes](../../docs/APPLE-CLIENTS-IMPLEMENTATION.md#watchos-8-and-apple-watch-series-3)
+for the source rationale and remaining checks.
 
 ## Native appearance
 

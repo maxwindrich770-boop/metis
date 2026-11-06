@@ -1,6 +1,7 @@
 SDKROOT = watchos
 SUPPORTED_PLATFORMS = watchos watchsimulator
-WATCHOS_DEPLOYMENT_TARGET = 10.0
+// SwiftUI tasks and confirmation dialogs set the minimum supported OS.
+WATCHOS_DEPLOYMENT_TARGET = 8.0
 TARGETED_DEVICE_FAMILY = 4
 SWIFT_VERSION = 5.0
 ALWAYS_SEARCH_USER_PATHS = NO
