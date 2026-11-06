@@ -25,6 +25,28 @@ Share links or text to Metis from the system share sheet, then open Metis to
 review the draft. In a chat, use **Attach** to choose files, photos or camera
 images. Metis uploads only when you tap **Send**.
 
+## Native appearance
+
+The iPhone views use the current Metis web app's flat neutral palette, compact
+controls and original vector wordmark. Light and dark appearance follow the
+device. The sign-in screen uses labeled fields, chats show their server and
+available activity metadata, and the conversation keeps assistant text open
+with muted user bubbles and a bordered composer. The model menu sits beside
+the attachment control; available models still come from the server.
+
+Design references: `app/globals.css`, `components/app-shell.tsx`,
+`components/composer-add-menu.tsx`, and `public/metis-wordmark.svg` in
+[the official repository](https://github.com/f1shyondrugs/metis), reviewed at
+`7d3bf21562244ed3596b5bba9c3bea7dee34885d`. The asset catalog retains the
+wordmark's paths and proportions and renders it as a light/dark template.
+
+The November native design changes were prepared on the Linux development
+server after the Mac was disconnected. Xcode compilation, updated simulator
+screenshots, Dynamic Type/landscape checks, VoiceOver and signed iPhone
+installation still need to run on the Mac. The UI suite includes screenshot
+attachments and a sign-in keyboard/accessibility layout check for that pass.
+The earlier verification results describe the preceding native build.
+
 ## Personal Team iPhone test
 
 For a free Personal Team, prepare a separate iPhone-only project on the Mac:

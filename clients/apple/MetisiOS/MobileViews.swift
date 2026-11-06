@@ -5,6 +5,174 @@ import UserNotifications
 import UniformTypeIdentifiers
 import QuickLook
 
+// Native counterparts of the neutral light/dark tokens in app/globals.css.
+// Keep provider and model metadata out of this presentation layer.
+enum MetisTheme {
+    static let background = neutral(light: 0.980, dark: 0.025)
+    static let surface = neutral(light: 1.000, dark: 0.047)
+    static let secondary = neutral(light: 0.961, dark: 0.079)
+    static let ink = neutral(light: 0.090, dark: 0.980)
+    static let muted = neutral(light: 0.420, dark: 0.650)
+    static let border = neutral(light: 0.860, dark: 0.220)
+    static let primary = neutral(light: 0.145, dark: 0.898)
+    static let onPrimary = neutral(light: 0.980, dark: 0.145)
+    static let corner: CGFloat = 14
+
+    private static func neutral(light: CGFloat, dark: CGFloat) -> Color {
+        Color(uiColor: UIColor { traits in
+            UIColor(white: traits.userInterfaceStyle == .dark ? dark : light, alpha: 1)
+        })
+    }
+}
+
+struct MetisWordmark: View {
+    var width: CGFloat = 64
+
+    var body: some View {
+        Image("MetisWordmark")
+            .resizable()
+            .renderingMode(.template)
+            .scaledToFit()
+            .frame(width: width, height: width * 904.859 / 2138.473)
+            .foregroundStyle(MetisTheme.ink)
+            .accessibilityLabel("Metis")
+    }
+}
+
+struct MetisPrimaryButtonStyle: ButtonStyle {
+    @Environment(\.isEnabled) private var isEnabled
+
+    func makeBody(configuration: Configuration) -> some View {
+        configuration.label
+            .font(.body.weight(.semibold))
+            .frame(maxWidth: .infinity, minHeight: 52)
+            .foregroundStyle(MetisTheme.onPrimary)
+            .background(MetisTheme.primary, in: RoundedRectangle(cornerRadius: MetisTheme.corner))
+            .opacity(isEnabled ? (configuration.isPressed ? 0.8 : 1) : 0.45)
+    }
+}
+
+struct MetisIconButtonStyle: ButtonStyle {
+    func makeBody(configuration: Configuration) -> some View {
+        configuration.label.opacity(configuration.isPressed ? 0.65 : 1)
+    }
+}
+
+struct MetisField<Content: View>: View {
+    let title: LocalizedStringKey
+    let symbol: String
+    @ViewBuilder let content: Content
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Text(title).font(.subheadline.weight(.medium))
+            HStack(spacing: 12) {
+                Image(systemName: symbol)
+                    .frame(width: 20)
+                    .foregroundStyle(MetisTheme.muted)
+                    .accessibilityHidden(true)
+                content
+                    .font(.body)
+                    .frame(minHeight: 52)
+            }
+            .padding(.horizontal, 16)
+            .background(MetisTheme.surface, in: RoundedRectangle(cornerRadius: MetisTheme.corner))
+            .overlay {
+                RoundedRectangle(cornerRadius: MetisTheme.corner)
+                    .strokeBorder(MetisTheme.border, lineWidth: 1)
+            }
+        }
+    }
+}
+
+struct MetisNotice: View {
+    let text: String
+    var accessibilityID = ""
+
+    var body: some View {
+        Label {
+            Text(text).fixedSize(horizontal: false, vertical: true)
+                .accessibilityIdentifier(accessibilityID)
+        } icon: {
+            Image(systemName: "info.circle").accessibilityHidden(true)
+        }
+        .font(.footnote)
+        .foregroundStyle(MetisTheme.ink)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(12)
+        .background(MetisTheme.secondary, in: RoundedRectangle(cornerRadius: MetisTheme.corner))
+    }
+}
+
+struct MetisChatRow: View {
+    let chat: ChatSummary
+
+    var body: some View {
+        HStack(alignment: .top, spacing: 12) {
+            Image(systemName: chat.pinned == true ? "pin" : "bubble.left")
+                .font(.body)
+                .foregroundStyle(MetisTheme.muted)
+                .frame(width: 40, height: 40)
+                .background(MetisTheme.secondary, in: RoundedRectangle(cornerRadius: MetisTheme.corner))
+                .accessibilityHidden(true)
+            VStack(alignment: .leading, spacing: 6) {
+                Text(chat.title.isEmpty ? String(localized: "Untitled chat") : chat.title)
+                    .font(.body.weight(.medium))
+                    .foregroundStyle(MetisTheme.ink)
+                    .lineLimit(2)
+                if chat.pendingApproval != nil {
+                    Label("Approval required", systemImage: "lock.shield")
+                        .font(.caption).foregroundStyle(MetisTheme.muted)
+                } else if chat.pendingQuestion != nil {
+                    Label("Agent question", systemImage: "questionmark.bubble")
+                        .font(.caption).foregroundStyle(MetisTheme.muted)
+                } else if let status = chat.runStatus, status != "idle" {
+                    Text(status.replacingOccurrences(of: "_", with: " ").capitalized)
+                        .font(.caption).foregroundStyle(MetisTheme.muted)
+                } else if let date = lastActivity {
+                    Text(date, format: .dateTime.month(.abbreviated).day())
+                        .font(.caption).foregroundStyle(MetisTheme.muted)
+                }
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+            if chat.archived == true {
+                Image(systemName: "archivebox").foregroundStyle(MetisTheme.muted)
+                    .accessibilityLabel("Archived")
+            }
+        }
+        .padding(.vertical, 8)
+    }
+
+    static func accessibilityStatus(for chat: ChatSummary) -> String {
+        var values: [String] = []
+        if chat.pinned == true { values.append(String(localized: "Pinned")) }
+        if chat.archived == true { values.append(String(localized: "Archived")) }
+        if chat.pendingApproval != nil { values.append(String(localized: "Approval required")) }
+        if chat.pendingQuestion != nil { values.append(String(localized: "Agent question")) }
+        if let status = chat.runStatus, status != "idle" {
+            values.append(status.replacingOccurrences(of: "_", with: " ").capitalized)
+        }
+        return values.joined(separator: ", ")
+    }
+
+    private var lastActivity: Date? {
+        guard let value = chat.lastMessageSent ?? chat.createdAt else { return nil }
+        let formatter = ISO8601DateFormatter()
+        formatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+        return formatter.date(from: value) ?? ISO8601DateFormatter().date(from: value)
+    }
+}
+
+extension View {
+    func metisScreen() -> some View {
+        self
+            .scrollContentBackground(.hidden)
+            .background(MetisTheme.background)
+            .toolbarBackground(MetisTheme.background, for: .navigationBar, .tabBar)
+            .toolbarBackground(.visible, for: .navigationBar, .tabBar)
+    }
+}
+
 struct ChatMarkdown: View {
     private enum Block {
         case prose(String)
@@ -32,15 +200,19 @@ struct ChatMarkdown: View {
                             }
                             .labelStyle(.iconOnly)
                             .buttonStyle(.borderless)
+                            .frame(minWidth: 44, minHeight: 44)
                         }
                         ScrollView(.horizontal) {
                             Text(verbatim: content).font(.system(.footnote, design: .monospaced))
                         }
                     }
-                    .padding(8).background(.quaternary, in: RoundedRectangle(cornerRadius: 8))
+                    .padding(12)
+                    .background(MetisTheme.secondary, in: RoundedRectangle(cornerRadius: MetisTheme.corner))
                 }
             }
         }
+        .font(.body)
+        .lineSpacing(4)
         .textSelection(.enabled)
         .environment(\.openURL, OpenURLAction { url in
             if ["http", "https"].contains(url.scheme?.lowercased() ?? "") { return .systemAction }
@@ -131,6 +303,7 @@ struct PushSettingsView: View {
                 Button(enabled ? "Disable push alerts" : "Enable push alerts", action: change)
             }
             .disabled(busy)
+            .metisScreen()
             .navigationTitle("Push alerts")
             .toolbar { Button("Done") { dismiss() } }
         }
@@ -199,6 +372,7 @@ struct ConnectionSettingsView: View {
                 if let error { Text(error).font(.footnote) }
                 if let status { Text(status).font(.footnote) }
             }
+            .metisScreen()
             .navigationTitle("Settings")
             .task { await load() }
             .refreshable { await load() }
@@ -516,6 +690,7 @@ struct ActivityView: View {
                     }
                 }
             }
+            .metisScreen()
             .navigationTitle("Activity")
             .task { await load() }
             .refreshable { await load() }
@@ -552,6 +727,7 @@ struct ProjectsView: View {
                     }
                 }
             }
+            .metisScreen()
             .navigationTitle("Projects")
             .task {
                 do { projects = try await client.projects() }
@@ -584,6 +760,7 @@ private struct ProjectDetail: View {
             }
             ForEach(chats) { chat in Button(chat.title) { open(chat.id) } }
         }
+        .metisScreen()
         .navigationTitle(project.name)
         .task {
             do {

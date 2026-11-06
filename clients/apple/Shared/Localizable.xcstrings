@@ -1,6 +1,16 @@
 {
   "sourceLanguage" : "en",
   "strings" : {
+    "Sign in to your server." : { "localizations" : { "de" : { "stringUnit" : { "state" : "translated", "value" : "Melde dich bei deinem Server an." } } } },
+    "Use the HTTPS address of your Metis server." : { "localizations" : { "de" : { "stringUnit" : { "state" : "translated", "value" : "Verwende die HTTPS-Adresse deines Metis-Servers." } } } },
+    "Connecting…" : { "localizations" : { "de" : { "stringUnit" : { "state" : "translated", "value" : "Verbindung wird hergestellt…" } } } },
+    "Start a conversation with Metis." : { "localizations" : { "de" : { "stringUnit" : { "state" : "translated", "value" : "Starte eine Unterhaltung mit Metis." } } } },
+    "Message Metis…" : { "localizations" : { "de" : { "stringUnit" : { "state" : "translated", "value" : "Nachricht an Metis…" } } } },
+    "Remove attachment" : { "localizations" : { "de" : { "stringUnit" : { "state" : "translated", "value" : "Anhang entfernen" } } } },
+    "Pinned" : { "localizations" : { "de" : { "stringUnit" : { "state" : "translated", "value" : "Angeheftet" } } } },
+    "Archived" : { "localizations" : { "de" : { "stringUnit" : { "state" : "translated", "value" : "Archiviert" } } } },
+    "Untitled chat" : { "localizations" : { "de" : { "stringUnit" : { "state" : "translated", "value" : "Chat ohne Titel" } } } },
+    "Server" : { "localizations" : { "de" : { "stringUnit" : { "state" : "translated", "value" : "Server" } } } },
     "Account" : { "localizations" : { "de" : { "stringUnit" : { "state" : "translated", "value" : "Konto" } } } },
     "Activity" : { "localizations" : { "de" : { "stringUnit" : { "state" : "translated", "value" : "Aktivität" } } } },
     "Agent question" : { "localizations" : { "de" : { "stringUnit" : { "state" : "translated", "value" : "Agentenfrage" } } } },

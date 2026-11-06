@@ -10,6 +10,8 @@ struct MetisApp: App {
 
 private struct RootView: View {
     private enum Destination { case chats, activity, projects, settings }
+    private enum SignInField { case server, username, password }
+    @FocusState private var signInFocus: SignInField?
 
     @ObservedObject var push: MetisAppDelegate
     @ObservedObject var watch: WatchRelay
@@ -46,7 +48,10 @@ private struct RootView: View {
     @State private var flushingLogouts = false
 
     var body: some View {
-        content.task(id: scenePhase) {
+        content
+            .tint(MetisTheme.ink)
+            .foregroundStyle(MetisTheme.ink)
+            .task(id: scenePhase) {
             guard scenePhase == .active else { return }
             if client == nil { await restoreSession() }
             await flushLogouts()
@@ -156,33 +161,55 @@ private struct RootView: View {
         }
     }
 
+
     private func chatList(_ client: MetisAPI) -> some View {
         NavigationStack(path: $navigation) {
-            List(chats.filter { search.isEmpty || $0.title.localizedCaseInsensitiveContains(search) }) { chat in
-                NavigationLink(value: chat) {
-                    HStack {
-                        if chat.pinned == true { Image(systemName: "pin.fill").accessibilityLabel("Pinned") }
-                        Text(chat.title.isEmpty ? "Untitled chat" : chat.title)
-                        Spacer()
-                        if chat.archived == true { Image(systemName: "archivebox").accessibilityLabel("Archived") }
-                        if let status = chat.runStatus, status != "idle" {
-                            Text(status.replacingOccurrences(of: "_", with: " ").capitalized)
-                                .font(.caption).foregroundStyle(.secondary)
+            List {
+                HStack(spacing: 8) {
+                    Image(systemName: "server.rack").accessibilityHidden(true)
+                    Text(verbatim: URL(string: client.origin)?.host ?? client.origin)
+                        .lineLimit(1).truncationMode(.middle)
+                    Spacer(minLength: 0)
+                }
+                .font(.caption)
+                .foregroundStyle(MetisTheme.muted)
+                .listRowInsets(EdgeInsets(top: 4, leading: 20, bottom: 16, trailing: 20))
+                .listRowSeparator(.hidden)
+                .listRowBackground(Color.clear)
+                .accessibilityLabel(Text("Server"))
+                .accessibilityValue(Text(verbatim: client.origin))
+
+                ForEach(chats.filter { search.isEmpty || $0.title.localizedCaseInsensitiveContains(search) }) { chat in
+                    NavigationLink(value: chat) {
+                        MetisChatRow(chat: chat)
+                    }
+                    .accessibilityLabel(chat.title.isEmpty ? String(localized: "Untitled chat") : chat.title)
+                    .accessibilityValue(MetisChatRow.accessibilityStatus(for: chat))
+                    .listRowInsets(EdgeInsets(top: 4, leading: 20, bottom: 4, trailing: 20))
+                    .listRowBackground(Color.clear)
+                    .listRowSeparatorTint(MetisTheme.border)
+                    .contextMenu {
+                        Button(chat.pinned == true ? "Unpin" : "Pin") {
+                            Task { await update(client, chat: chat, pinned: chat.pinned != true) }
+                        }
+                        Button(chat.archived == true ? "Restore" : "Archive") {
+                            Task { await update(client, chat: chat, archived: chat.archived != true) }
                         }
                     }
                 }
-                .contextMenu {
-                    Button(chat.pinned == true ? "Unpin" : "Pin") {
-                        Task { await update(client, chat: chat, pinned: chat.pinned != true) }
-                    }
-                    Button(chat.archived == true ? "Restore" : "Archive") {
-                        Task { await update(client, chat: chat, archived: chat.archived != true) }
-                    }
-                }
             }
+            .listStyle(.plain)
+            .metisScreen()
             .overlay {
                 if chats.isEmpty {
-                    ContentUnavailableView("No chats", systemImage: "bubble.left.and.bubble.right")
+                    ContentUnavailableView {
+                        Label("No chats", systemImage: "bubble.left.and.bubble.right")
+                    } description: {
+                        Text("Start a conversation with Metis.")
+                    } actions: {
+                        Button("New chat", systemImage: "square.and.pencil") { Task { await newChat(client) } }
+                            .buttonStyle(.bordered).disabled(busy)
+                    }
                 } else if !search.isEmpty && !chats.contains(where: { $0.title.localizedCaseInsensitiveContains(search) }) {
                     ContentUnavailableView.search(text: search)
                 }
@@ -200,14 +227,17 @@ private struct RootView: View {
             }
             .refreshable { await refresh(client) }
             .toolbar {
-                ToolbarItem(placement: .primaryAction) {
-                    Button("New chat", systemImage: "square.and.pencil") { Task { await newChat(client) } }
-                        .disabled(busy)
-                }
                 ToolbarItem(placement: .topBarLeading) {
-                    Menu("Filter chats", systemImage: "line.3.horizontal.decrease.circle") {
+                    MetisWordmark()
+                }
+                ToolbarItemGroup(placement: .topBarTrailing) {
+                    Menu("Filter chats", systemImage: "line.3.horizontal.decrease") {
                         Toggle("Show archived chats", isOn: $includeArchived)
                     }
+                    .frame(minWidth: 44, minHeight: 44)
+                    Button("New chat", systemImage: "square.and.pencil") { Task { await newChat(client) } }
+                        .frame(minWidth: 44, minHeight: 44)
+                        .disabled(busy)
                 }
             }
             .safeAreaInset(edge: .bottom) { status }
@@ -216,43 +246,113 @@ private struct RootView: View {
 
     private var signInForm: some View {
         NavigationStack {
-            Form {
-                Section("Connect to Metis") {
-                    TextField("https://metis.example.com", text: $server)
-                        .accessibilityIdentifier("metis.server")
-                        .textContentType(.URL)
-                        .keyboardType(.URL)
-                        .textInputAutocapitalization(.never)
-                        .autocorrectionDisabled()
-                    TextField("Username", text: $username)
-                        .accessibilityIdentifier("metis.username")
-                        .textContentType(.username)
-                        .textInputAutocapitalization(.never)
-                        .autocorrectionDisabled()
-                    SecureField("Password", text: $password)
-                        .accessibilityIdentifier("metis.password")
-                        .textContentType(.password)
-                    Button("Sign in") { Task { await signIn() } }
+            ScrollView {
+                VStack(spacing: 32) {
+                    VStack(spacing: 20) {
+                        MetisWordmark(width: 112)
+                        VStack(spacing: 8) {
+                            Text("Connect to Metis")
+                                .font(.title.weight(.semibold))
+                                .tracking(-0.5)
+                            Text("Sign in to your server.")
+                                .font(.subheadline)
+                                .foregroundStyle(MetisTheme.muted)
+                        }
+                        .multilineTextAlignment(.center)
+                    }
+                    .padding(.top, 32)
+
+                    VStack(alignment: .leading, spacing: 20) {
+                        VStack(alignment: .leading, spacing: 8) {
+                            MetisField(title: "Server", symbol: "globe") {
+                                TextField("https://metis.example.com", text: $server)
+                                    .accessibilityLabel("Server")
+                                    .accessibilityIdentifier("metis.server")
+                                    .textContentType(.URL)
+                                    .keyboardType(.URL)
+                                    .textInputAutocapitalization(.never)
+                                    .autocorrectionDisabled()
+                                    .focused($signInFocus, equals: .server)
+                                    .submitLabel(.next)
+                                    .onSubmit { signInFocus = .username }
+                            }
+                            Text("Use the HTTPS address of your Metis server.")
+                                .font(.caption)
+                                .foregroundStyle(MetisTheme.muted)
+                        }
+                        MetisField(title: "Username", symbol: "person") {
+                            TextField("Username", text: $username)
+                                .accessibilityIdentifier("metis.username")
+                                .textContentType(.username)
+                                .textInputAutocapitalization(.never)
+                                .autocorrectionDisabled()
+                                .focused($signInFocus, equals: .username)
+                                .submitLabel(.next)
+                                .onSubmit { signInFocus = .password }
+                        }
+                        MetisField(title: "Password", symbol: "lock") {
+                            SecureField("Password", text: $password)
+                                .accessibilityIdentifier("metis.password")
+                                .textContentType(.password)
+                                .focused($signInFocus, equals: .password)
+                                .submitLabel(.go)
+                                .onSubmit { if canSignIn { submitSignIn() } }
+                        }
+                        if let notice {
+                            MetisNotice(text: notice, accessibilityID: "metis.signInNotice")
+                        }
+                        Button(action: submitSignIn) {
+                            HStack(spacing: 10) {
+                                if busy {
+                                    ProgressView().tint(MetisTheme.onPrimary)
+                                    Text("Connecting…")
+                                } else {
+                                    Text("Sign in")
+                                    Image(systemName: "arrow.right").accessibilityHidden(true)
+                                }
+                            }
+                        }
+                        .buttonStyle(MetisPrimaryButtonStyle())
                         .accessibilityIdentifier("metis.signIn")
-                        .disabled(busy || server.isEmpty || username.trimmingCharacters(in: .whitespaces).isEmpty || password.isEmpty)
-                    if canRetrySession {
-                        Button("Retry saved session") { Task { await restoreSession() } }
+                        .disabled(!canSignIn)
+
+                        if canRetrySession {
+                            Button("Retry saved session") { Task { await restoreSession() } }
+                                .frame(maxWidth: .infinity, minHeight: 44)
+                        }
                     }
                 }
-                status
+                .frame(maxWidth: 420)
+                .padding(.horizontal, 24)
+                .padding(.bottom, 32)
+                .frame(maxWidth: .infinity)
             }
+            .scrollDismissesKeyboard(.interactively)
+            .background(MetisTheme.background)
             .disabled(busy)
-            .navigationTitle("Metis")
+            .toolbar(.hidden, for: .navigationBar)
             .onAppear { if server.isEmpty { server = savedServer } }
         }
     }
 
+    private var canSignIn: Bool {
+        !busy && !server.isEmpty && !username.trimmingCharacters(in: .whitespaces).isEmpty && !password.isEmpty
+    }
+
+    private func submitSignIn() {
+        signInFocus = nil
+        Task { await signIn() }
+    }
+
     @ViewBuilder private var status: some View {
-        if busy {
-            ProgressView().padding()
-        }
-        if let notice {
-            Text(notice).font(.footnote).padding()
+        if busy || notice != nil {
+            VStack(spacing: 8) {
+                if busy { ProgressView().padding(8) }
+                if let notice { MetisNotice(text: notice) }
+            }
+            .padding(.horizontal, 16)
+            .padding(.vertical, 8)
+            .background(MetisTheme.background)
         }
     }
 

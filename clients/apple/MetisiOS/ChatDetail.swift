@@ -15,6 +15,7 @@ struct ChatDetail: View {
     let syncRevision: Int
     @Binding var draft: ComposerDraft?
     @Environment(\.scenePhase) private var scenePhase
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
     let onUnauthorized: () -> Void
     @State private var history = ChatHistoryWindow()
     @State private var latestETag: String?
@@ -67,7 +68,8 @@ struct ChatDetail: View {
         ScrollViewReader { scroll in
             transcript
                 .onChange(of: scrollRevision) { _, _ in
-                    withAnimation(.easeOut(duration: 0.18)) { scroll.scrollTo("chat-end", anchor: .bottom) }
+                    if reduceMotion { scroll.scrollTo("chat-end", anchor: .bottom) }
+                    else { withAnimation(.easeOut(duration: 0.18)) { scroll.scrollTo("chat-end", anchor: .bottom) } }
                 }
         }
     }
@@ -78,60 +80,38 @@ struct ChatDetail: View {
                 Button("Load earlier messages") { Task { await load(before: nextBefore) } }
                     .disabled(busy)
             }
-            if busy { ProgressView() }
+            if busy {
+                ProgressView().frame(maxWidth: .infinity).padding(12)
+                    .listRowSeparator(.hidden).listRowBackground(Color.clear)
+            }
             if notice != nil && !hasLoaded {
                 Button("Try again") { Task { await load() } }.disabled(busy)
             }
             if hasLoaded && history.messages.isEmpty && runningID == nil {
-                ContentUnavailableView("No messages", systemImage: "text.bubble")
+                ContentUnavailableView {
+                    MetisWordmark(width: 88)
+                } description: {
+                    Text("Start a conversation with Metis.")
+                }
+                .listRowSeparator(.hidden).listRowBackground(Color.clear)
             }
             ForEach(history.messages.filter { streamText.isEmpty || $0.id != streamMessageID }) { message in
-                VStack(alignment: .leading, spacing: 6) {
-                    Text(message.role.capitalized).font(.caption).foregroundStyle(.secondary)
-                    if !message.content.isEmpty {
-                        ChatMarkdown(text: message.content)
-                    }
-                    if let error = message.errorMessage, !error.isEmpty {
-                        Text(verbatim: error).foregroundStyle(.secondary)
-                    }
-                    if message.contentUrl != nil {
-                        Text("Full message available in Metis on the web.").font(.footnote)
-                    } else if message.content.isEmpty && message.errorMessage?.isEmpty != false {
-                        Text("No text.").foregroundStyle(.secondary)
-                    }
-                    ForEach(message.attachments ?? []) { file in
-                        Button(file.name, systemImage: "paperclip") {
-                            Task { await openAttachment(file) }
-                        }
-                        .buttonStyle(.borderless)
-                        .disabled(downloadBusy)
-                    }
-                    if !message.reasoning.isEmpty {
-                        DisclosureGroup("Reasoning") {
-                            Text(verbatim: message.reasoning).textSelection(.enabled)
-                        }
-                    }
-                    ForEach(Array(message.toolActivity.enumerated()), id: \.offset) { _, tool in
-                        DisclosureGroup {
-                            if let detail = tool.detail { Text(verbatim: detail).textSelection(.enabled) }
-                            if let input = tool.input { ChatMarkdown(text: input) }
-                            if let result = tool.result { ChatMarkdown(text: result) }
-                            if tool.inputUrl != nil || tool.resultUrl != nil {
-                                Text("Full tool details are available in Metis on the web.").font(.footnote)
-                            }
-                        } label: {
-                            LabeledContent(tool.name, value: tool.status.capitalized)
-                        }
-                    }
-                    if message.eventsUrl != nil {
-                        Text("Earlier tool activity is available in Metis on the web.").font(.footnote)
-                    }
-                }
+                messageRow(message)
+                    .listRowInsets(EdgeInsets(top: 12, leading: 20, bottom: 12, trailing: 20))
+                    .listRowSeparator(.hidden)
+                    .listRowBackground(Color.clear)
             }
             if !streamText.isEmpty {
-                Text(verbatim: streamText)
-                    .textSelection(.enabled)
-                    .accessibilityIdentifier("metis.streamText")
+                VStack(alignment: .leading, spacing: 10) {
+                    Text("Metis").font(.subheadline.weight(.semibold))
+                    Text(verbatim: streamText)
+                        .font(.body).lineSpacing(4)
+                        .textSelection(.enabled)
+                        .accessibilityIdentifier("metis.streamText")
+                }
+                .foregroundStyle(MetisTheme.ink)
+                .listRowInsets(EdgeInsets(top: 12, leading: 20, bottom: 12, trailing: 20))
+                .listRowSeparator(.hidden).listRowBackground(Color.clear)
             }
             if runningID != nil {
                 HStack {
@@ -139,10 +119,11 @@ struct ChatDetail: View {
                     Text(streamStatus ?? "Agent is working…").font(.footnote)
                     Spacer()
                     if needsReconnect {
-                        Button("Reconnect") { streamAttempt &+= 1 }.buttonStyle(.borderless)
+                        Button("Reconnect") { streamAttempt &+= 1 }
+                            .buttonStyle(.borderless).frame(minHeight: 44)
                     }
                     Button("Stop", role: .destructive) { Task { await stop() } }
-                        .buttonStyle(.borderless).disabled(cancelling)
+                        .buttonStyle(.borderless).frame(minWidth: 44, minHeight: 44).disabled(cancelling)
                 }
             } else if terminalPending {
                 if notice != nil {
@@ -154,25 +135,14 @@ struct ChatDetail: View {
             } else if let interruptedID {
                 Button("Resume interrupted run") { Task { await resume(interruptedID) } }.disabled(sending)
             }
-            Color.clear.frame(height: 1).listRowSeparator(.hidden).accessibilityHidden(true).id("chat-end")
+            Color.clear.frame(height: 1).listRowSeparator(.hidden).listRowBackground(Color.clear)
+                .accessibilityHidden(true).id("chat-end")
         }
+        .listStyle(.plain)
+        .scrollDismissesKeyboard(.interactively)
+        .metisScreen()
         .navigationTitle(title ?? (chat.title.isEmpty ? "Chat" : chat.title))
         .navigationBarTitleDisplayMode(.inline)
-        .toolbar {
-            Menu("Model", systemImage: "cpu") {
-                Button("Use chat default") { selectedModel = nil }
-                if models.isEmpty { Button("Load models") { Task { await loadModels() } } }
-                ForEach(models) { model in
-                    Button {
-                        selectedModel = model.id
-                    } label: {
-                        if selectedModel == model.id { Label(model.title, systemImage: "checkmark") }
-                        else { Text(model.title) }
-                    }
-                }
-            }
-            .disabled(sending || runningID != nil)
-        }
         .onChange(of: scenePhase) { _, phase in
             if phase != .active { foregroundReady = false }
         }
@@ -201,77 +171,7 @@ struct ChatDetail: View {
             await load()
         }
         .refreshable { await reload() }
-        .safeAreaInset(edge: .bottom) {
-            VStack(alignment: .leading) {
-                if pendingApproval {
-                    Button("Review pending approval", systemImage: "lock.shield") {
-                        Task { await reviewApproval() }
-                    }
-                }
-                if let question, question.status == nil || question.status == "waiting_for_user" {
-                    Button(question.title ?? "Answer agent question", systemImage: "questionmark.bubble") {
-                        shownQuestion = question
-                    }
-                }
-                if let notice {
-                    Text(notice)
-                        .font(.footnote)
-                        .accessibilityIdentifier("metis.chatNotice")
-                }
-                if !files.isEmpty {
-                    ScrollView(.horizontal) {
-                        HStack {
-                            ForEach(files) { file in
-                                HStack(spacing: 6) {
-                                    if file.temporary {
-                                        Button("Preview", systemImage: "eye") { draftPreview = file.url }
-                                            .labelStyle(.iconOnly)
-                                    }
-                                    Button {
-                                        remove(file)
-                                    } label: {
-                                        Label(file.url.lastPathComponent, systemImage: "xmark.circle")
-                                            .font(.caption).lineLimit(1)
-                                    }
-                                }
-                            }
-                        }
-                    }
-                }
-                HStack(alignment: .bottom) {
-                    Menu("Attach", systemImage: "plus.circle") {
-                        Button("Files", systemImage: "doc") { showFiles = true }
-                        PhotosPicker(selection: $photo, matching: .images) { Label("Photos", systemImage: "photo") }
-                        if UIImagePickerController.isSourceTypeAvailable(.camera) {
-                            Button("Camera", systemImage: "camera") { Task { await openCamera() } }
-                        }
-                    }
-                    .disabled(files.count >= 10)
-                    TextField("Message", text: Binding(
-                        get: { draft?.text ?? "" },
-                        set: { text in
-                            draft = text.isEmpty ? nil : ComposerDraft(text: text)
-                            attachmentDraftID = UUID().uuidString
-                        }
-                    ), axis: .vertical).lineLimit(1...6)
-                        .accessibilityIdentifier("metis.message")
-                    Button {
-                        Task { await send() }
-                    } label: {
-                        Label("Send", systemImage: "arrow.up.circle.fill")
-                            .labelStyle(.iconOnly)
-                            .font(.title2)
-                            .frame(width: 44, height: 44)
-                            .contentShape(Rectangle())
-                    }
-                        .accessibilityIdentifier("metis.send")
-                        .disabled(sending || runningID != nil || terminalPending || !hasLoaded ||
-                                  (files.isEmpty && (draft?.text ?? "").trimmingCharacters(in: .whitespacesAndNewlines).isEmpty))
-                }
-            }
-            .padding().background(.bar)
-            .disabled(sending)
-        }
+        .safeAreaInset(edge: .bottom) { composer }
         .fileImporter(isPresented: $showFiles, allowedContentTypes: [.item], allowsMultipleSelection: true) { result in
             do {
                 for url in try result.get().prefix(max(0, 10 - files.count)) {
@@ -341,6 +241,225 @@ struct ChatDetail: View {
                 if let id = file.uploadID { Task { try? await client.deleteUpload(id) } }
             }
         }
+    }
+
+
+    private func messageRow(_ message: ChatMessage) -> some View {
+        HStack(alignment: .top, spacing: 0) {
+            if message.role == "user" { Spacer(minLength: 24) }
+            VStack(alignment: .leading, spacing: 10) {
+                Text(message.role == "assistant" ? "Metis" : message.role.capitalized)
+                    .font(.subheadline.weight(.semibold))
+                    .foregroundStyle(MetisTheme.muted)
+                if !message.content.isEmpty {
+                    ChatMarkdown(text: message.content)
+                }
+                if let error = message.errorMessage, !error.isEmpty {
+                    Label {
+                        Text(verbatim: error)
+                    } icon: {
+                        Image(systemName: "exclamationmark.circle").accessibilityHidden(true)
+                    }
+                    .font(.footnote)
+                }
+                if message.contentUrl != nil {
+                    Text("Full message available in Metis on the web.").font(.footnote)
+                } else if message.content.isEmpty && message.errorMessage?.isEmpty != false {
+                    Text("No text.").foregroundStyle(MetisTheme.muted)
+                }
+                ForEach(message.attachments ?? []) { file in
+                    Button(file.name, systemImage: "paperclip") {
+                        Task { await openAttachment(file) }
+                    }
+                    .font(.subheadline)
+                    .frame(minHeight: 44, alignment: .leading)
+                    .buttonStyle(.borderless)
+                    .disabled(downloadBusy)
+                }
+                if !message.reasoning.isEmpty {
+                    DisclosureGroup("Reasoning") {
+                        Text(verbatim: message.reasoning)
+                            .font(.subheadline).foregroundStyle(MetisTheme.muted)
+                            .textSelection(.enabled)
+                    }
+                    .frame(minHeight: 44)
+                }
+                ForEach(Array(message.toolActivity.enumerated()), id: \.offset) { _, tool in
+                    DisclosureGroup {
+                        if let detail = tool.detail { Text(verbatim: detail).textSelection(.enabled) }
+                        if let input = tool.input { ChatMarkdown(text: input) }
+                        if let result = tool.result { ChatMarkdown(text: result) }
+                        if tool.inputUrl != nil || tool.resultUrl != nil {
+                            Text("Full tool details are available in Metis on the web.").font(.footnote)
+                        }
+                    } label: {
+                        Label {
+                            LabeledContent(tool.name, value: tool.status.capitalized)
+                        } icon: {
+                            Image(systemName: "terminal").accessibilityHidden(true)
+                        }
+                        .font(.footnote).foregroundStyle(MetisTheme.muted)
+                    }
+                    .frame(minHeight: 44)
+                }
+                if message.eventsUrl != nil {
+                    Text("Earlier tool activity is available in Metis on the web.").font(.footnote)
+                }
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .padding(message.role == "user" ? 14 : 0)
+            .background(message.role == "user" ? MetisTheme.secondary : Color.clear,
+                        in: RoundedRectangle(cornerRadius: MetisTheme.corner))
+        }
+        .font(.body)
+        .foregroundStyle(MetisTheme.ink)
+    }
+
+    private var composer: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            if pendingApproval {
+                Button("Review pending approval", systemImage: "lock.shield") {
+                    Task { await reviewApproval() }
+                }
+                .font(.subheadline).frame(minHeight: 44)
+            }
+            if let question, question.status == nil || question.status == "waiting_for_user" {
+                Button(question.title ?? "Answer agent question", systemImage: "questionmark.bubble") {
+                    shownQuestion = question
+                }
+                .font(.subheadline).frame(minHeight: 44)
+            }
+            if let notice {
+                MetisNotice(text: notice, accessibilityID: "metis.chatNotice")
+            }
+            if !files.isEmpty {
+                ScrollView(.horizontal) {
+                    HStack(spacing: 8) {
+                        ForEach(files) { file in
+                            HStack(spacing: 0) {
+                                if file.temporary {
+                                    Button("Preview", systemImage: "eye") { draftPreview = file.url }
+                                        .labelStyle(.iconOnly)
+                                        .frame(width: 44, height: 44)
+                                }
+                                Text(verbatim: file.url.lastPathComponent)
+                                    .font(.caption).lineLimit(1)
+                                    .frame(maxWidth: 160)
+                                    .padding(.leading, file.temporary ? 0 : 12)
+                                Button {
+                                    remove(file)
+                                } label: {
+                                    Image(systemName: "xmark").frame(width: 44, height: 44)
+                                }
+                                .accessibilityLabel("Remove attachment")
+                                .accessibilityValue(file.url.lastPathComponent)
+                            }
+                            .background(MetisTheme.secondary, in: RoundedRectangle(cornerRadius: MetisTheme.corner))
+                        }
+                    }
+                }
+            }
+            VStack(spacing: 0) {
+                TextField("Message Metis…", text: Binding(
+                    get: { draft?.text ?? "" },
+                    set: { text in
+                        draft = text.isEmpty ? nil : ComposerDraft(text: text)
+                        attachmentDraftID = UUID().uuidString
+                    }
+                ), axis: .vertical)
+                    .font(.body)
+                    .lineLimit(1...6)
+                    .padding(.horizontal, 16)
+                    .padding(.top, 14)
+                    .padding(.bottom, 8)
+                    .accessibilityLabel("Message")
+                    .accessibilityIdentifier("metis.message")
+                HStack(spacing: 8) {
+                    Menu {
+                        Button("Files", systemImage: "doc") { showFiles = true }
+                        PhotosPicker(selection: $photo, matching: .images) { Label("Photos", systemImage: "photo") }
+                        if UIImagePickerController.isSourceTypeAvailable(.camera) {
+                            Button("Camera", systemImage: "camera") { Task { await openCamera() } }
+                        }
+                    } label: {
+                        Image(systemName: "plus").frame(width: 44, height: 44)
+                    }
+                    .accessibilityLabel("Attach")
+                    .disabled(files.count >= 10)
+
+                    modelMenu
+                    Spacer(minLength: 0)
+                    Button {
+                        Task { await send() }
+                    } label: {
+                        Group {
+                            if sending { ProgressView().tint(MetisTheme.onPrimary) }
+                            else { Image(systemName: "arrow.up").font(.body.weight(.semibold)) }
+                        }
+                        .frame(width: 44, height: 44)
+                        .foregroundStyle(MetisTheme.onPrimary)
+                        .background(MetisTheme.primary, in: Circle())
+                        .opacity(canSend ? 1 : 0.4)
+                        .contentShape(Circle())
+                    }
+                    .buttonStyle(MetisIconButtonStyle())
+                    .accessibilityLabel("Send")
+                    .accessibilityIdentifier("metis.send")
+                    .disabled(!canSend)
+                }
+                .padding(.horizontal, 8)
+                .padding(.bottom, 8)
+            }
+            .background(MetisTheme.surface, in: RoundedRectangle(cornerRadius: MetisTheme.corner))
+            .overlay {
+                RoundedRectangle(cornerRadius: MetisTheme.corner)
+                    .strokeBorder(MetisTheme.border, lineWidth: 1)
+            }
+        }
+        .padding(.horizontal, 16)
+        .padding(.vertical, 8)
+        .background(MetisTheme.background)
+        .disabled(sending)
+    }
+
+    private var canSend: Bool {
+        !sending && runningID == nil && !terminalPending && hasLoaded &&
+        (!files.isEmpty || !(draft?.text ?? "").trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+    }
+
+    private var modelMenu: some View {
+        Menu {
+            Button("Use chat default") { selectedModel = nil }
+            if models.isEmpty { Button("Load models") { Task { await loadModels() } } }
+            ForEach(models) { model in
+                Button {
+                    selectedModel = model.id
+                } label: {
+                    if selectedModel == model.id { Label(model.title, systemImage: "checkmark") }
+                    else { Text(model.title) }
+                }
+            }
+        } label: {
+            HStack(spacing: 6) {
+                Image(systemName: "cpu").accessibilityHidden(true)
+                Text(modelLabel).lineLimit(1)
+                Image(systemName: "chevron.down").font(.caption2).accessibilityHidden(true)
+            }
+            .font(.caption.weight(.medium))
+            .foregroundStyle(MetisTheme.muted)
+            .frame(minHeight: 44)
+            .contentShape(Rectangle())
+        }
+        .accessibilityLabel("Model")
+        .accessibilityValue(modelLabel)
+        .disabled(sending || runningID != nil)
+    }
+
+    private var modelLabel: String {
+        if let id = selectedModel ?? chatModel, let model = models.first(where: { $0.id == id }) {
+            return model.title
+        }
+        return String(localized: "Model")
     }
 
     private struct SyncIdentity: Equatable {
