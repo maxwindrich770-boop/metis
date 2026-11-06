@@ -25,6 +25,30 @@ Share links or text to Metis from the system share sheet, then open Metis to
 review the draft. In a chat, use **Attach** to choose files, photos or camera
 images. Metis uploads only when you tap **Send**.
 
+## Personal Team iPhone test
+
+For a free Personal Team, prepare a separate iPhone-only project on the Mac:
+
+```sh
+python3 clients/apple/scripts/prepare-personal-team.py \
+  --team '<TEAM_ID_FROM_XCODE>' \
+  --bundle-id '<YOUR_UNIQUE_BUNDLE_ID>' \
+  --output /tmp/metis-personal-team-test
+```
+
+Use your own Team ID from Xcode Settings → Accounts and an available bundle ID.
+The output directory must be new and outside the checkout. The helper creates
+`MetisPersonalTeam.xcodeproj` with the shared **Metis Test** scheme and display
+name. Open that generated project, select the connected iPhone and run with
+your authenticated Personal Team. Preparation does not build, provision or
+install anything; the original project and schemes stay unchanged.
+Regenerate the temporary project if its directory or the source checkout moves.
+
+This variant omits Push entitlements, App Groups, the Share Extension and Watch
+companion. Push alerts, share-sheet handoff and the Watch app are unavailable.
+Chat, attachments and the existing HTTPS/Keychain session behavior remain in
+the iPhone sources. No Watch Simulator runtime download is needed.
+
 ## Local fixture
 
 From the repository root, install the repository dependencies and start the
