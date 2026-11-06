@@ -1,7 +1,7 @@
 # Metis für iOS und Apple Watch — vollständiger Entwicklungsplan
 
-> **Status:** Entwicklungs- und Architekturvorgabe für Codex (noch keine Implementierung)  
-> **Stand:** 03.11.2026  
+> **Status:** Implementierung vorhanden; aktueller Phasenstand und Testnachweise unter `docs/APPLE-CLIENTS-IMPLEMENTATION.md`. Die offenen Kästchen unten sind die ursprünglichen Abnahmekriterien und keine aktuelle Fortschrittsanzeige.
+> **Stand:** 06.11.2026
 > **Projekt:** [f1shyondrugs/metis](https://github.com/f1shyondrugs/metis)  
 > **Audit-Basis:** `master` bei `a5a70d4bbcb56c9a8cf582d37e3a7467840d35ce` (vor Implementierungsbeginn gegen HEAD prüfen).  
 > **Ziel:** Eine echte, native, öffentlich über den Apple App Store verteilbare iPhone-App mit Push-Aktionen, ergänzt durch eine watchOS-App. Die vorhandene Metis-Web-App und alle bestehenden Installationen bleiben funktionsfähig.

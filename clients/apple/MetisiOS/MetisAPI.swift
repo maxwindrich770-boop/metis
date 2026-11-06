@@ -194,6 +194,7 @@ struct MetisNotification: Decodable, Identifiable {
 
 struct MetisModel: Decodable, Identifiable {
     let id: String
+    let legacyIds: [String]?
     let displayName: String?
     let name: String?
     let label: String?
@@ -278,6 +279,7 @@ enum MetisError: LocalizedError {
     case unauthorized
     case unexpectedResponse
     case noModel
+    case unavailableModel
     case questionFields([String: String])
     case http(Int, retryAfter: Int?)
 
@@ -291,6 +293,8 @@ enum MetisError: LocalizedError {
             return "This server did not return a compatible Metis response."
         case .noModel:
             return "No model is available. Configure a provider in Metis."
+        case .unavailableModel:
+            return String(localized: "The selected model is no longer available. Choose another model.")
         case .questionFields:
             return "Check the highlighted answers."
         case .http(429, let seconds):
@@ -561,8 +565,14 @@ final class MetisAPI {
     }
 
     func modelForSend(chatModel: String?) async throws -> String {
-        if let chatModel, !chatModel.isEmpty { return chatModel }
         let catalog: ModelList = try await request(["models"])
+        if let chatModel, !chatModel.isEmpty {
+            if let exact = catalog.models.first(where: { $0.id == chatModel }) { return exact.id }
+            // Match the server's account routing only through its explicit aliases.
+            let aliases = catalog.models.filter { $0.legacyIds?.contains(chatModel) == true }
+            guard aliases.count == 1 else { throw MetisError.unavailableModel }
+            return aliases[0].id
+        }
         guard let id = catalog.defaultModelId, catalog.models.contains(where: { $0.id == id }) else {
             throw MetisError.noModel
         }

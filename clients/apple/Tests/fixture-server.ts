@@ -85,6 +85,9 @@ async function main() {
       if (url.pathname === "/fixture-control" && method === "POST") {
         const state = url.searchParams.get("state");
         if (state === "offline" || state === "online") offline = state === "offline";
+        else if (state === "external-message") {
+          appendMessage(thread.id, { role: "assistant", content: "Message sent from another client 🌱" }, alice.id);
+        }
         else if (state === "revoke") {
           db.prepare("DELETE FROM sessions WHERE user_id=?").run(alice.id);
           createChat("Fixture post-revocation signal", undefined, alice.id);

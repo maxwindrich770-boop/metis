@@ -46,6 +46,7 @@
     "Sign out" : { "localizations" : { "de" : { "stringUnit" : { "state" : "translated", "value" : "Abmelden" } } } },
     "Stop" : { "localizations" : { "de" : { "stringUnit" : { "state" : "translated", "value" : "Abbrechen" } } } },
     "Submit answer" : { "localizations" : { "de" : { "stringUnit" : { "state" : "translated", "value" : "Antwort senden" } } } },
+    "The selected model is no longer available. Choose another model." : { "localizations" : { "de" : { "stringUnit" : { "state" : "translated", "value" : "Das ausgewählte Modell ist nicht mehr verfügbar. Wähle ein anderes Modell." } } } },
     "Updating conversation…" : { "localizations" : { "de" : { "stringUnit" : { "state" : "translated", "value" : "Chat wird aktualisiert …" } } } },
     "Username" : { "localizations" : { "de" : { "stringUnit" : { "state" : "translated", "value" : "Benutzername" } } } }
   },

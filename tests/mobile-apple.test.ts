@@ -19,7 +19,7 @@ test("Apple routes isolate accounts, version approvals and retry or revoke encry
   });
   const { authenticateUser, createUser, revokeRequestSession } = await import("../lib/auth");
   const { createChat } = await import("../lib/db-store");
-  const { appendRunEvent } = await import("../lib/db-jobs");
+  const { appendRunEvent, enqueueJob } = await import("../lib/db-jobs");
   const { createApproval } = await import("../lib/db-approvals");
   const { getDatabase } = await import("../lib/sqlite");
   const { createNotification } = await import("../lib/notification-store");
@@ -59,10 +59,13 @@ test("Apple routes isolate accounts, version approvals and retry or revoke encry
 
     await t.test("revocation closes open chat and run streams before their next event", async () => {
       const session = authenticateUser(alice.username, "fixture")!.token;
-      const jobId = randomUUID();
-      appendRunEvent(jobId, chat.id, alice.id, "text", { text: "Before revocation" });
+      const streamChat = createChat("Stream revocation fixture", undefined, alice.id);
+      const { id: jobId } = enqueueJob({
+        chatId: streamChat.id, userId: alice.id, message: "Stream revocation fixture",
+      });
+      appendRunEvent(jobId, streamChat.id, alice.id, "text", { text: "Before revocation" });
       const chatsResponse = await chatEvents.GET(req("/api/chats/events", session));
-      const runResponse = await runs.GET(req(`/api/runs?chatId=${chat.id}&jobId=${jobId}&events=1&stream=1`, session));
+      const runResponse = await runs.GET(req(`/api/runs?chatId=${streamChat.id}&jobId=${jobId}&events=1&stream=1`, session));
       assert.equal(chatsResponse.status, 200);
       assert.equal(runResponse.status, 200);
       const chats = chatsResponse.body!.getReader();
@@ -75,7 +78,7 @@ test("Apple routes isolate accounts, version approvals and retry or revoke encry
         assert.match(await read(run), /Before revocation/);
         revokeRequestSession(req("/api/auth", session));
         createChat("After revocation", undefined, alice.id);
-        appendRunEvent(jobId, chat.id, alice.id, "text", { text: "After revocation" });
+        appendRunEvent(jobId, streamChat.id, alice.id, "text", { text: "After revocation" });
         for (const reader of [chats, run]) {
           assert.equal(await read(reader), "event: auth-expired\ndata: {}\n\n");
           assert.equal((await reader.read()).done, true);

@@ -12,6 +12,7 @@ struct ComposerDraft {
 struct ChatDetail: View {
     let chat: ChatSummary
     let client: MetisAPI
+    let syncRevision: Int
     @Binding var draft: ComposerDraft?
     @Environment(\.scenePhase) private var scenePhase
     let onUnauthorized: () -> Void
@@ -53,9 +54,11 @@ struct ChatDetail: View {
     @State private var downloadBusy = false
     @State private var scrollRevision = 0
 
-    init(chat: ChatSummary, client: MetisAPI, draft: Binding<ComposerDraft?>, onUnauthorized: @escaping () -> Void) {
+    init(chat: ChatSummary, client: MetisAPI, syncRevision: Int, draft: Binding<ComposerDraft?>,
+         onUnauthorized: @escaping () -> Void) {
         self.chat = chat
         self.client = client
+        self.syncRevision = syncRevision
         self._draft = draft
         self.onUnauthorized = onUnauthorized
     }
@@ -177,6 +180,17 @@ struct ChatDetail: View {
             guard scenePhase == .active else { return }
             await reload()
             if !Task.isCancelled { foregroundReady = true }
+        }
+        .task(id: SyncIdentity(revision: syncRevision, active: scenePhase == .active)) {
+            guard scenePhase == .active, syncRevision > 0 else { return }
+            // Coalesce changes and wait for pagination or a terminal refresh so
+            // an event received during an in-flight load is not discarded.
+            do {
+                try await Task.sleep(for: .milliseconds(250))
+                while busy { try await Task.sleep(for: .milliseconds(50)) }
+            } catch { return }
+            guard !Task.isCancelled else { return }
+            await reload(preservingNotice: true)
         }
         .task(id: StreamIdentity(job: foregroundReady && scenePhase == .active ? runningID : nil,
                                  attempt: streamAttempt)) {
@@ -329,18 +343,27 @@ struct ChatDetail: View {
         }
     }
 
+    private struct SyncIdentity: Equatable {
+        let revision: Int
+        let active: Bool
+    }
+
     private struct StreamIdentity: Equatable {
         let job: String?
         let attempt: Int
     }
 
-    private func reload() async {
-        await load()
+    private func reload(preservingNotice: Bool = false) async {
+        await load(clearNotice: !preservingNotice)
         guard !Task.isCancelled, runningID == nil, !sending, !terminalPending else { return }
         do {
             let jobs = try await client.jobs(chatID: chat.id)
             guard !Task.isCancelled, runningID == nil, !sending, !terminalPending else { return }
             if let active = jobs.first(where: \.active) {
+                // A retained draft may be awaiting a manual retry after its
+                // acknowledgement was lost. Keep that retry available with
+                // the same message ID instead of adopting its run implicitly.
+                if active.messageId == (draft?.id ?? attachmentDraftID) { return }
                 begin(active.id, status: active.status)
             } else {
                 interruptedID = jobs.first?.status == "interrupted" ? jobs.first?.id : nil
@@ -548,10 +571,10 @@ struct ChatDetail: View {
         }
     }
 
-    private func load(before: Int? = nil) async {
+    private func load(before: Int? = nil, clearNotice: Bool = true) async {
         guard !busy else { return }
         busy = true
-        notice = nil
+        if clearNotice { notice = nil }
         defer { busy = false }
         let terminalAtStart = terminalRevision
         await fetchHistory(before: before)

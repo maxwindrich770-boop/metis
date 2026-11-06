@@ -85,12 +85,24 @@ jobs:
           swiftc -D DEBUG clients/apple/MetisiOS/MetisAPI.swift clients/apple/Tests/Smoke.swift -o "$RUNNER_TEMP/metis-apple-smoke"
           node --import tsx clients/apple/Tests/fixture-server.ts &
           fixture_pid=$!
-          trap 'kill "$fixture_pid" 2>/dev/null || true' EXIT
-          for attempt in {1..30}; do
-            if curl --silent --output /dev/null http://localhost:43100/api/chats; then break; fi
-            sleep 1
-          done
+          trap 'if [[ -n "$fixture_pid" ]]; then kill "$fixture_pid" 2>/dev/null || true; fi' EXIT
+          wait_for_fixture() {
+            for attempt in {1..30}; do
+              kill -0 "$fixture_pid" 2>/dev/null || return 1
+              if curl --silent --output /dev/null http://localhost:43100/api/chats; then return 0; fi
+              sleep 1
+            done
+            return 1
+          }
+          wait_for_fixture
           "$RUNNER_TEMP/metis-apple-smoke"
+          # Smoke tests mutate the seed. Give UI tests a new temporary database.
+          kill "$fixture_pid"
+          wait "$fixture_pid" || true
+          fixture_pid=""
+          node --import tsx clients/apple/Tests/fixture-server.ts &
+          fixture_pid=$!
+          wait_for_fixture
           device="$(xcrun simctl list devices available --json | node -e '
             const fs = require("node:fs");
             const runtimes = Object.entries(JSON.parse(fs.readFileSync(0, "utf8")).devices).reverse();

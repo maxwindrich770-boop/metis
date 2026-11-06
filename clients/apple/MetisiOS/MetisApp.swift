@@ -27,6 +27,7 @@ private struct RootView: View {
     @State private var includeArchived = false
     @State private var chatCursor = 0
     @State private var chatRevision = 0
+    @State private var detailRevision = 0
     @State private var changedChats: Set<String> = []
     @State private var needsChatSnapshot = false
     @State private var busy = false
@@ -189,7 +190,7 @@ private struct RootView: View {
             .searchable(text: $search)
             .navigationTitle("Chats")
             .navigationDestination(for: ChatSummary.self) { chat in
-                ChatDetail(chat: chat, client: client, draft: Binding(
+                ChatDetail(chat: chat, client: client, syncRevision: detailRevision, draft: Binding(
                     get: { composerDrafts[chat.id] },
                     set: { if self.client === client { composerDrafts[chat.id] = $0 } }
                 )) {
@@ -397,6 +398,9 @@ private struct RootView: View {
                     return ($0.lastMessageSent ?? $0.createdAt ?? "") > ($1.lastMessageSent ?? $1.createdAt ?? "")
                 }
             }
+            if let visibleID = navigation.last?.id, full || ids.contains(visibleID) {
+                detailRevision &+= 1
+            }
             changedChats.removeAll()
             needsChatSnapshot = false
             notice = nil
@@ -566,6 +570,7 @@ private struct RootView: View {
         navigation = []
         chatCursor = 0
         chatRevision = 0
+        detailRevision = 0
         changedChats = []
         needsChatSnapshot = false
         search = ""

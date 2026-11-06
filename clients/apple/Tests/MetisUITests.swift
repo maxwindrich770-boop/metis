@@ -35,11 +35,16 @@ final class MetisUITests: XCTestCase {
         chat.tap()
         XCTAssertTrue(composer.waitForExistence(timeout: 5))
         XCTAssertEqual(composer.value as? String, "Hello from the iPhone simulator")
+        try await setFixtureSessionState("external-message")
+        XCTAssertTrue(app.staticTexts["Message sent from another client 🌱"].waitForExistence(timeout: 10),
+                      "An open chat must refresh changes from another client without navigation or a foreground switch")
+        XCTAssertEqual(composer.value as? String, "Hello from the iPhone simulator",
+                       "An external chat update must preserve the unsent draft")
         let transcript = app.collectionViews.firstMatch
         let earlier = app.buttons["Load earlier messages"]
         scrollToEarlier(earlier, in: transcript)
         earlier.tap()
-        scrollToEarlier(app.staticTexts["Nachricht 16 🌱"], in: transcript)
+        scrollToEarlier(app.staticTexts["Nachricht 17 🌱"], in: transcript)
         scrollToEarlier(earlier, in: transcript)
         earlier.tap()
         let firstMessage = app.staticTexts["Nachricht 1 🌱"]

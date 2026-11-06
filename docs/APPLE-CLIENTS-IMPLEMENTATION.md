@@ -22,6 +22,68 @@ outbox and versioned mobile approval routes. See the
 | H, device integrations | File/photo/camera selection, Shortcuts with a draft preview, and Share Extension for text and links. App Group provisioning and device tests remain open. |
 | I, release | Reproducible unsigned builds, app icons, a privacy manifest, local tests, CI configuration, and a [release checklist](./APPSTORE-RELEASE-CHECKLIST.md). Signing, store screenshots, review demo, TestFlight and external acceptance remain open. |
 
+## Foreground chat follow-up — 6 November 2026
+
+The previous uncommitted Apple implementation is preserved in baseline commit
+`cc70add` on branch `feat/apple-foreground-sync`. The follow-up changes are
+separate from that snapshot.
+
+- Chat-sync batches now invalidate the open transcript when its chat changes
+  or the stream requests a full snapshot. An unrelated chat event does not
+  reload the visible conversation. The detail view coalesces refreshes, waits
+  for in-flight history loads and cancels its refresh task outside the foreground.
+  The existing history window, run cursor, streamed text and composer binding
+  remain in place.
+- Sending validates an explicit or persisted model ID against the current
+  server catalog before uploading attachments. A removed selection produces
+  an English/German error and retains the draft. An unset selection uses only
+  an available default returned by the server. Explicit server-provided legacy
+  aliases resolve to their canonical account model only when the match is unique;
+  an exact model ID takes precedence.
+- Automatic refreshes retain send errors and the stable submission ID for a
+  manual retry after a lost acknowledgement, including attachment-only messages.
+- The fixture can append an external message through its loopback-only test
+  control. The iPhone regression test requires that message to appear without
+  navigation or a foreground switch and checks that the unsent draft survives.
+  The same test failed on the previous transcript implementation at that assertion.
+  CI now restarts its own fixture between Swift smoke and UI suites to avoid
+  sharing mutated seed data. UI tests use normal simulator ad-hoc signing for
+  Keychain access; unsigned compilation alone does not exercise session restoration.
+- The development plan's status now points here instead of claiming that no
+  implementation exists. Signing, APNs device delivery and Watch hardware
+  acceptance remain open. Watch simulator/runtime downloads are deferred by
+  operator instruction.
+
+### Follow-up verification
+
+On the existing Mac toolchain (Xcode 27.2, iOS 27.2 simulator, Node 26.3.0):
+
+- Both iPhone UI tests passed: external foreground changes, preserved drafts,
+  history pagination, lost-acknowledgement retry without duplicates, live worker
+  streaming, background resume, Keychain relaunch, offline recovery and session
+  revocation. The UI suite used simulator ad-hoc signing without a developer team.
+- The final Swift smoke binary passed against a fresh isolated fixture, including
+  live explicit/default model selection, rejection of a missing model, and
+  server-advertised legacy alias resolution. It also exercised auth/isolation,
+  history, replay, attachments and a real local worker stream.
+- The focused backend command
+  `node --import tsx --test tests/mobile-apple.test.ts tests/chat-submit-worker.test.ts tests/run-event-stream.test.ts`
+  passed all 10 tests. The inherited revocation fixture now creates its isolated
+  job through `enqueueJob` before appending events, satisfying the existing foreign key.
+- The unsigned generic iPhone Release build (including Watch and Share Extension),
+  TypeScript check, focused ESLint and Apple CI shell syntax checks passed.
+  `NEXT_DIST_DIR=tmp/metis-apple-foreground-web-build pnpm build` passed with an
+  isolated data directory. Generated temporary TypeScript paths were removed.
+- `pnpm test` completed the backlog/provider groups (80/80 and 52/52) and the shared
+  group (1,138 passed, 2 failed, 1 skipped). It stopped at that group's nonzero
+  exit, so later chained groups were not reached. Both failures reproduced in a
+  separate unchanged `cc70add` worktree: server-monitor startup reads a missing
+  temporary `server-metrics.json`; workspace glob search compares macOS
+  `/private/var/...` with `/var/...`. These remain pre-existing Web test issues.
+
+No Watch runtime was installed or downloaded. No production deployment,
+TestFlight upload, signed device/APNs delivery or physical Watch test was performed.
+
 ## Session and transport
 
 Deployment target is iOS 17. The prototype bundle ID is a local build default.

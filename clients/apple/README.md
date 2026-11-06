@@ -55,7 +55,16 @@ swiftc -D DEBUG clients/apple/MetisiOS/MetisAPI.swift clients/apple/Tests/Smoke.
 /tmp/metis-apple-smoke
 ```
 
-With an installed iPhone Simulator runtime and the same fixture running,
+The smoke test changes chats, messages and run state. Before running the UI
+tests, stop only the fixture with Ctrl-C in its terminal and start it again:
+
+```sh
+node --import tsx clients/apple/Tests/fixture-server.ts
+```
+
+Each restart creates a fresh temporary database with the original seed.
+Restart between smoke and UI test runs so the suites do not share mutated data.
+With an installed iPhone Simulator runtime and the fresh fixture running,
 run the native UI tests:
 
 ```sh
@@ -63,6 +72,10 @@ xcodebuild -project clients/apple/MetisApple.xcodeproj -scheme Metis \
   -destination 'platform=iOS Simulator,name=<installed iPhone>' \
   -parallel-testing-enabled NO test
 ```
+
+Keep normal simulator code signing enabled for UI tests so Keychain session
+restoration can be exercised. Simulator signing does not require an Apple
+Developer team. The commands below disable signing for compilation checks.
 
 To compile without code signing:
 

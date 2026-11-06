@@ -50,6 +50,8 @@ struct Smoke {
         try check(try await alice.profileName() == "metis-apple-fixture-alice", "Authenticated account profile")
         try check(try await alice.chats() == aliceChats, "Second sign-in changed first client's session")
 
+        try await verifyModelSelection(client: alice)
+
         let chatID = aliceChats[0].id
         let first = try await alice.chatPage(id: chatID)
         guard let recent = first.page, let etag = first.etag else { throw SmokeFailure(step: "Missing chat page or validator") }
@@ -123,7 +125,34 @@ struct Smoke {
         } catch MetisError.unauthorized {}
         try check(try await bob.chats() == bobChats, "Alice's logout revoked Bob's session")
         try await bob.signOut()
-        print("PASS: auth, session restore, detached logout, isolation, history, create, send, deduplication, cancel, SSE replay, chunked attachment and live worker stream")
+        print("PASS: auth, session restore, detached logout, isolation, history, create, send, deduplication, cancel, SSE replay, live model selection, chunked attachment and live worker stream")
+    }
+
+    private static func verifyModelSelection(client: MetisAPI) async throws {
+        let catalog = try await client.models()
+        guard let available = catalog.first else { throw SmokeFailure(step: "Fixture model catalog is empty") }
+        let explicit = try await client.modelForSend(chatModel: available.id)
+        try check(explicit == available.id, "An available explicit model was changed")
+        var aliasChecks = 0
+        for model in catalog {
+            for alias in model.legacyIds ?? [] {
+                guard !catalog.contains(where: { $0.id == alias }),
+                      catalog.filter({ $0.legacyIds?.contains(alias) == true }).count == 1 else { continue }
+                let canonical = try await client.modelForSend(chatModel: alias)
+                try check(canonical == model.id, "An advertised legacy alias used the wrong account model")
+                aliasChecks += 1
+            }
+        }
+        if aliasChecks == 0 { print("SKIP: Live fixture catalog exposes no unambiguous legacy alias") }
+        else { print("PASS: Live model catalog legacy aliases resolve to their canonical account IDs") }
+        let serverDefault = try await client.modelForSend(chatModel: nil)
+        try check(catalog.contains(where: { $0.id == serverDefault }), "Default model was not in the live catalog")
+        try check(try await client.modelForSend(chatModel: "") == serverDefault, "Empty selection did not use the server default")
+        let removed = "removed-" + UUID().uuidString
+        do {
+            _ = try await client.modelForSend(chatModel: removed)
+            throw SmokeFailure(step: "An unavailable selected model was silently accepted or replaced")
+        } catch MetisError.unavailableModel {}
     }
 
     @MainActor private static func verifyLiveRun(client: MetisAPI, chatID: String) async throws {
