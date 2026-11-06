@@ -68,12 +68,16 @@ Design references: `app/globals.css`, `components/app-shell.tsx`,
 `7d3bf21562244ed3596b5bba9c3bea7dee34885d`. The asset catalog retains the
 wordmark's paths and proportions and renders it as a light/dark template.
 
-The November native design changes were prepared on the Linux development
-server with native Mac validation deferred. Xcode compilation, updated simulator
-screenshots, Dynamic Type/landscape checks, VoiceOver and signed iPhone
-installation still need to run on the Mac. The UI suite includes screenshot
-attachments and a sign-in keyboard/accessibility layout check for that pass.
-The earlier verification results describe the preceding native build.
+On 6 November 2026 the updated views compiled with Xcode 27.2. Four selected
+UI tests passed across light/dark and paired iPhone-simulator runs: HTTPS
+rejection, live chat and session recovery, accessible sign-in with large text
+and landscape, and Watch opt-in restoration after restart. The suite exports
+real simulator screenshots. The Watch source passed an 8.0 API availability
+type-check; the previous source failed that same check on newer APIs. Its
+current-SDK simulator build uses an explicit 9.0 override and its process
+started on watchOS 27.2. Direct watchOS 8 execution, manual Watch navigation
+and VoiceOver verification remain open. No physical-device installation or
+production deployment was performed in this simulator validation pass.
 
 ## Personal Team iPhone test
 
