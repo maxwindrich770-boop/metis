@@ -552,7 +552,8 @@ enum MetisAppWebPresentation {
         const keyboardVisible = fullHeight > innerHeight + 1;
         for (const dock of document.querySelectorAll('[data-metis-app-composer-dock]')) {
           const previous = parseFloat(dock.style.getPropertyValue('--metis-app-composer-shift')) || 0;
-          const bottomInFlow = dock.getBoundingClientRect().bottom - previous;
+          const reservedInset = dockSpacers.get(dock)?.getBoundingClientRect().height || 0;
+          const bottomInFlow = dock.getBoundingClientRect().bottom - previous - reservedInset;
           const next = keyboardVisible ? Math.min(0, innerHeight - bottomInFlow) : 0;
           if (Math.abs(next - previous) > 0.25) dock.style.setProperty('--metis-app-composer-shift', next + 'px');
         }
@@ -614,21 +615,21 @@ enum MetisAppWebPresentation {
             observedDocks.add(dock);
           }
           if (dock) {
+            let spacer = dockSpacers.get(dock);
+            if (!spacer?.isConnected) {
+              spacer = document.createElement('div');
+              spacer.dataset.metisAppKeyboardSpacer = '';
+              spacer.setAttribute('aria-hidden', 'true');
+              dockSpacers.set(dock, spacer);
+            }
+            // Keep the measured dock height unchanged when WebKit removes its
+            // Home inset. The translated, clipped spacer is not a visible gap.
+            if (dock.lastElementChild !== spacer) dock.append(spacer);
             if (dock.classList.contains('relative')) {
               dock.dataset.metisAppEmptyDock = '';
-              let spacer = dockSpacers.get(dock);
-              if (!spacer?.isConnected) {
-                spacer = document.createElement('div');
-                spacer.dataset.metisAppKeyboardSpacer = '';
-                spacer.setAttribute('aria-hidden', 'true');
-                dock.after(spacer);
-                dockSpacers.set(dock, spacer);
-              }
             } else if (dock.hasAttribute('data-metis-app-empty-dock')) {
               delete dock.dataset.metisAppEmptyDock;
               dock.style.removeProperty('--metis-app-composer-shift');
-              dockSpacers.get(dock)?.remove();
-              dockSpacers.delete(dock);
             }
           }
         }

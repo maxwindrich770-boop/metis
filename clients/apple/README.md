@@ -163,8 +163,10 @@ bounds animations are removed; longer pages, gestures and pinch retain their
 behavior. Correction covers both opening and closing through UIKit's reported
 transition duration and the following settle frames. Chat-only clipped root
 boxes keep the larger background from becoming a scrollable root document;
-other Web panes keep their normal viewport layout. Empty-state flow also retains
-its closed Home-indicator footprint while the native input surface changes.
+other Web panes keep their normal viewport layout. A reserve inside the dock
+retains its measured Home-indicator footprint while the native input surface
+changes. Empty-state flow stays steady, and the canonical transcript observer
+does not repin messages because a tall composer's measured height lost its inset.
 The keyboard regression repeatedly opens and dismisses both established-chat
 and empty-state composers using Web blur and the actual system Done button;
 readonly focus with a retained input accessory remains a separate geometry case.

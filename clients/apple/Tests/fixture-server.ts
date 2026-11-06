@@ -42,6 +42,7 @@ function webWorkspaceFixture(username: string, cookieName: string, externalAddre
     <a href="/?fixture=composer-zoom">Open synthetic contenteditable composer fixture</a>
     <a href="/?fixture=viewport-empty">Open synthetic centered empty-state fixture</a>
     <a href="/?fixture=viewport-empty-flow">Open synthetic empty composer flow fixture</a>
+    <a href="/?fixture=viewport-tall">Open synthetic tall composer transcript fixture</a>
     <a href="/?fixture=model-preferences">Open synthetic model preference storage fixture</a>
     <p id="error" role="alert"></p>
   </main>
@@ -150,7 +151,7 @@ function webModelPreferenceFixture() {
 
 // Production-like geometry, deliberately SYNTHETIC: this validates the app/web
 // viewport boundary and sidebar bridge, never the production Metis design.
-function webViewportFixture(username: string, contentEditableComposer = false, centeredEmptyState = false, productionEmptyState = false) {
+function webViewportFixture(username: string, contentEditableComposer = false, centeredEmptyState = false, productionEmptyState = false, tallComposer = false) {
   const expectedUsername = JSON.stringify(username).replaceAll("<", "\\u003c");
   return `<!doctype html>
 <html lang="en">
@@ -186,6 +187,9 @@ function webViewportFixture(username: string, contentEditableComposer = false, c
     body[data-empty-flow] #transcript { position: absolute; inset: 0; padding: 6px; overflow: auto; font-size: 8px; line-height: 10px; opacity: 0.2; pointer-events: none; z-index: 0; }
     body[data-empty-flow] #transcript button, body[data-empty-flow] #transcript a { display: none; }
     body[data-empty-flow] #empty-chat-layout { z-index: 1; }
+    body[data-tall-composer] #draft { min-height: 132px; height: 132px; }
+    body[data-tall-composer] #transcript { padding-bottom: 0; }
+    body[data-tall-composer] #viewport-metrics, body[data-tall-composer] #keyboard-transition, body[data-tall-composer] #keyboard-dismissal, body[data-tall-composer] #focus-state { height: 32px; overflow: hidden; }
     /* Same class-level baseline as production; the app must prevent focus zoom. */
     .composer-input-area { font-size: 15px; }
     #draft { flex: 1; min-width: 0; height: 68px; margin: 0; padding: 12px; border: 1px solid #74766c; border-radius: 18px; color: inherit; background: var(--popover); resize: none; overflow: auto; }
@@ -282,6 +286,32 @@ function webViewportFixture(username: string, contentEditableComposer = false, c
       element("transcript").before(layout);
     }
     const emptyRect = () => (element("flow-empty-state") || element("centered-empty-state"))?.getBoundingClientRect();
+    const tallComposer = ${tallComposer};
+    const anchorRect = () => element("transcript-anchor")?.getBoundingClientRect();
+    let tallDockObserver;
+    if (tallComposer) {
+      document.body.dataset.tallComposer = "true";
+      const transcript = element("transcript");
+      const inner = document.createElement("div");
+      inner.id = "transcript-inner";
+      while (transcript.firstChild) inner.append(transcript.firstChild);
+      const anchor = document.createElement("p");
+      anchor.id = "transcript-anchor";
+      anchor.textContent = "Synthetic transcript anchor row";
+      inner.append(anchor);
+      transcript.append(inner);
+      // Mirror the real app-shell composer measurement and its sticky-bottom
+      // transcript padding, including the tall-composer threshold.
+      tallDockObserver = new ResizeObserver(() => {
+        const stuckToBottom = transcript.scrollHeight - transcript.clientHeight - transcript.scrollTop <= 8;
+        const height = Math.ceil(element("composer-footer").getBoundingClientRect().height);
+        inner.style.paddingBottom = Math.max(172, height + 40) + "px";
+        if (stuckToBottom) transcript.scrollTop = transcript.scrollHeight;
+        scheduleMetrics();
+      });
+      tallDockObserver.observe(element("composer-footer"));
+      transcript.addEventListener("scroll", scheduleMetrics);
+    }
     let revision = 0;
     let measurementRevision = 0;
     let draftHasBeenFocused = false;
@@ -321,6 +351,11 @@ function webViewportFixture(username: string, contentEditableComposer = false, c
         composerPosition: getComputedStyle(element("composer-footer")).position,
         composerServerFixed: element("composer-footer").classList.contains("max-md:fixed"),
         productionEmptyState,
+        tallComposer,
+        composerDockHeight: element("composer-footer").getBoundingClientRect().height,
+        transcriptPaddingBottom: element("transcript-inner") ? parseFloat(getComputedStyle(element("transcript-inner")).paddingBottom) : null,
+        transcriptBottomDistance: Math.max(0, element("transcript").scrollHeight - element("transcript").clientHeight - element("transcript").scrollTop),
+        transcriptAnchorTop: anchorRect()?.top ?? null,
         emptyCenterY: emptyRect() ? (emptyRect().top + emptyRect().bottom) / 2 : null,
         composerBottom: draft.getBoundingClientRect().bottom,
         composerCenterX: (element("composer").getBoundingClientRect().left + element("composer").getBoundingClientRect().right) / 2,
@@ -369,6 +404,8 @@ function webViewportFixture(username: string, contentEditableComposer = false, c
           shellHeightDelta: element("viewport").getBoundingClientRect().height -
             (parseFloat(getComputedStyle(document.documentElement).getPropertyValue("--metis-app-window-height")) || innerHeight),
           emptyCenterY: emptyRect() ? (emptyRect().top + emptyRect().bottom) / 2 : null,
+          transcriptAnchorTop: anchorRect()?.top ?? null,
+          dockHeight: element("composer-footer").getBoundingClientRect().height,
         });
         if (now - started < 700 || samples.length < 12) { requestAnimationFrame(sample); return; }
         const range = key => Math.max(...samples.map(item => item[key])) - Math.min(...samples.map(item => item[key]));
@@ -379,6 +416,8 @@ function webViewportFixture(username: string, contentEditableComposer = false, c
           maxShellHeightError:Math.max(...samples.map(item=>Math.abs(item.shellHeightDelta))),
           dockOffsetAttempts,
           emptyCenterYRange: emptyRect() ? range("emptyCenterY") : null,
+          transcriptAnchorTopRange: anchorRect() ? range("transcriptAnchorTop") : null,
+          dockHeightRange: range("dockHeight"),
         });
         updateMetrics();
       }
@@ -449,6 +488,8 @@ function webViewportFixture(username: string, contentEditableComposer = false, c
           dockBottom: parseFloat(getComputedStyle(element("composer-footer")).bottom) || 0,
           viewportScale: window.visualViewport?.scale || 1,
           emptyCenterY: empty ? (empty.top + empty.bottom) / 2 : null,
+          transcriptAnchorTop: anchorRect()?.top ?? null,
+          dockHeight: element("composer-footer").getBoundingClientRect().height,
         });
         if (now - started < 900 || samples.length < 18) { requestAnimationFrame(sample); return; }
         const range = key => Math.max(...samples.map(item => item[key])) - Math.min(...samples.map(item => item[key]));
@@ -460,6 +501,8 @@ function webViewportFixture(username: string, contentEditableComposer = false, c
           maxDockBottom: Math.max(...samples.map(item => Math.abs(item.dockBottom))),
           viewportScaleRange: range("viewportScale"),
           emptyCenterYRange: empty ? range("emptyCenterY") : null,
+          transcriptAnchorTopRange: anchorRect() ? range("transcriptAnchorTop") : null,
+          dockHeightRange: range("dockHeight"),
         });
         updateMetrics();
       }
@@ -713,8 +756,8 @@ async function main() {
         const account = getAuthenticatedCookieUser(request);
         const externalAddress = url.origin.replace("localhost", "127.0.0.1") + "/fixture-external";
         const fixture = url.searchParams.get("fixture");
-        const html = account && (fixture === "viewport" || fixture === "composer-zoom" || fixture === "viewport-empty" || fixture === "viewport-empty-flow"
-          ? webViewportFixture(account.username, fixture === "composer-zoom", fixture === "viewport-empty", fixture === "viewport-empty-flow")
+        const html = account && (fixture === "viewport" || fixture === "composer-zoom" || fixture === "viewport-empty" || fixture === "viewport-empty-flow" || fixture === "viewport-tall"
+          ? webViewportFixture(account.username, fixture === "composer-zoom", fixture === "viewport-empty", fixture === "viewport-empty-flow", fixture === "viewport-tall")
           : fixture === "model-preferences" ? webModelPreferenceFixture()
           : fixture === "app-controls-subframe" ? webAppControlsSubframeFixture()
           : webWorkspaceFixture(account.username, CHAT_COOKIE, externalAddress));

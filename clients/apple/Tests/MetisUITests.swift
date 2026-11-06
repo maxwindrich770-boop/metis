@@ -597,12 +597,18 @@ final class MetisUITests: XCTestCase {
     }
 
     @MainActor
-    private func assertSyntheticKeyboardDismissal(centeredEmptyState: Bool, productionEmptyState: Bool = false) throws {
+    func testSyntheticTallComposerKeepsTranscriptSteadyAcrossKeyboardTransitions() throws {
+        try assertSyntheticKeyboardDismissal(centeredEmptyState: false, tallComposer: true)
+    }
+
+    @MainActor
+    private func assertSyntheticKeyboardDismissal(centeredEmptyState: Bool, productionEmptyState: Bool = false,
+                                                  tallComposer: Bool = false) throws {
         XCUIDevice.shared.orientation = .portrait
         let app = launch()
         signIn(app, server: "http://localhost:43100")
         let web = openSyntheticViewportFixture(in: app, centeredEmptyState: centeredEmptyState,
-                                               productionEmptyState: productionEmptyState)
+                                               productionEmptyState: productionEmptyState, tallComposer: tallComposer)
         let composer = web.descendants(matching: .any)["Synthetic viewport draft"].firstMatch
         let header = web.buttons["Open sidebar"]
         let closedHeader = header.frame
@@ -611,7 +617,19 @@ final class MetisUITests: XCTestCase {
         let greeting = web.staticTexts[productionEmptyState
             ? "Synthetic empty chat greeting" : "Synthetic centered empty state"]
         let closedGreetingY = centeredEmptyState || productionEmptyState ? greeting.frame.midY : nil
-        let expectedDraft = "Draft stays through repeated keyboard dismissal"
+        let expectedDraft = tallComposer
+            ? "Tall composer line one\nLine two stays put\nLine three stays put\nLine four stays put"
+            : "Draft stays through repeated keyboard dismissal"
+        let anchor = web.staticTexts["Synthetic transcript anchor row"]
+        if tallComposer { try scrollSyntheticTranscriptToBottom(in: app, web: web) }
+        let closedAnchorY = tallComposer ? anchor.frame.minY : nil
+        let closedDockHeight = try (tallComposer ? viewportMetrics(in: web).composerDockHeight : nil)
+        if tallComposer {
+            let metrics = try viewportMetrics(in: web)
+            XCTAssertTrue(metrics.tallComposer)
+            XCTAssertGreaterThan(try XCTUnwrap(metrics.transcriptPaddingBottom), 172,
+                                 "The real composerHeight + 40 padding branch must exceed the minimum threshold")
+        }
 
         for (index, kind) in ["blur", "system-done", "blur"].enumerated() {
             composer.tap()
@@ -644,6 +662,13 @@ final class MetisUITests: XCTestCase {
                 XCTAssertLessThanOrEqual(try XCTUnwrap(opening.emptyCenterYRange), 2,
                                         "Opening the keyboard must leave the greeting stationary")
                 XCTAssertEqual(greeting.frame.midY, closedGreetingY, accuracy: 2)
+            }
+            if let closedAnchorY, let closedDockHeight {
+                XCTAssertLessThanOrEqual(try XCTUnwrap(opening.transcriptAnchorTopRange), 2,
+                                        "The measured composer must not repin the visible transcript on opening")
+                XCTAssertLessThanOrEqual(opening.dockHeightRange, 2)
+                XCTAssertEqual(anchor.frame.minY, closedAnchorY, accuracy: 2)
+                XCTAssertEqual(try viewportMetrics(in: web).composerDockHeight, closedDockHeight, accuracy: 2)
             }
             if productionEmptyState {
                 let metrics = try viewportMetrics(in: web)
@@ -704,6 +729,15 @@ final class MetisUITests: XCTestCase {
             if centeredEmptyState || productionEmptyState {
                 XCTAssertLessThanOrEqual(try XCTUnwrap(transition.emptyCenterYRange), 2,
                                         "The centered background must not fly while the keyboard collapses")
+            }
+            if let closedAnchorY, let closedDockHeight {
+                XCTAssertLessThanOrEqual(try XCTUnwrap(transition.transcriptAnchorTopRange), 2,
+                                        "Closing input must preserve the visible row despite the real ResizeObserver padding path")
+                XCTAssertLessThanOrEqual(transition.dockHeightRange, 2)
+                XCTAssertEqual(anchor.frame.minY, closedAnchorY, accuracy: 2)
+                let metrics = try viewportMetrics(in: web)
+                XCTAssertEqual(metrics.composerDockHeight, closedDockHeight, accuracy: 2)
+                XCTAssertLessThanOrEqual(metrics.transcriptBottomDistance, 2)
             }
             let dismissed = XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in
                 guard let geometry = self.observedWindowGeometry(in: app) else { return false }
@@ -944,6 +978,8 @@ final class MetisUITests: XCTestCase {
     }
 
     private struct SyntheticKeyboardTransition: Decodable {
+        let transcriptAnchorTopRange: Double?
+        let dockHeightRange: Double
         let revision: Int
         let emptyCenterYRange: Double?
         let frames: Int
@@ -957,6 +993,8 @@ final class MetisUITests: XCTestCase {
     }
 
     private struct SyntheticKeyboardDismissal: Decodable {
+        let transcriptAnchorTopRange: Double?
+        let dockHeightRange: Double
         let revision: Int
         let kind: String
         let frames: Int
@@ -989,6 +1027,11 @@ final class MetisUITests: XCTestCase {
         let composerPosition: String
         let composerServerFixed: Bool
         let productionEmptyState: Bool
+        let tallComposer: Bool
+        let composerDockHeight: Double
+        let transcriptPaddingBottom: Double?
+        let transcriptBottomDistance: Double
+        let transcriptAnchorTop: Double?
         let emptyCenterY: Double?
         let composerBottom: Double
         let composerCenterX: Double
@@ -1108,11 +1151,13 @@ final class MetisUITests: XCTestCase {
 
     @MainActor
     private func openSyntheticViewportFixture(in app: XCUIApplication, contentEditableComposer: Bool = false,
-                                               centeredEmptyState: Bool = false, productionEmptyState: Bool = false) -> XCUIElement {
+                                               centeredEmptyState: Bool = false, productionEmptyState: Bool = false,
+                                               tallComposer: Bool = false) -> XCUIElement {
         let web = authenticatedWebWorkspace(in: app)
-        let openFixture = web.links[productionEmptyState ? "Open synthetic empty composer flow fixture"
-            : (centeredEmptyState ? "Open synthetic centered empty-state fixture"
-               : (contentEditableComposer ? "Open synthetic contenteditable composer fixture" : "Open synthetic viewport fixture"))]
+        let openFixture = web.links[tallComposer ? "Open synthetic tall composer transcript fixture"
+            : (productionEmptyState ? "Open synthetic empty composer flow fixture"
+               : (centeredEmptyState ? "Open synthetic centered empty-state fixture"
+                  : (contentEditableComposer ? "Open synthetic contenteditable composer fixture" : "Open synthetic viewport fixture")))]
         reveal(openFixture, in: app)
         openFixture.tap()
         XCTAssertTrue(web.staticTexts["Synthetic viewport fixture"].waitForExistence(timeout: 10))
@@ -1146,6 +1191,26 @@ final class MetisUITests: XCTestCase {
             }
         }
         XCTAssertTrue(element.isHittable, web.debugDescription)
+    }
+
+    @MainActor
+    private func scrollSyntheticTranscriptToBottom(in app: XCUIApplication, web: XCUIElement) throws {
+        let transcript = web.descendants(matching: .any)
+            .matching(NSPredicate(format: "label == %@", "Synthetic scrolling transcript, main")).firstMatch
+        let composer = web.descendants(matching: .any)["Synthetic viewport draft"].firstMatch
+        for _ in 0..<16 {
+            if try viewportMetrics(in: web).transcriptBottomDistance <= 2 { break }
+            let visibleBottom = min(transcript.frame.maxY, composer.frame.minY)
+            let visibleHeight = max(0, visibleBottom - transcript.frame.minY)
+            XCTAssertGreaterThan(visibleHeight, 44, "A real visible transcript region is required for the reader drag")
+            let origin = transcript.coordinate(withNormalizedOffset: .zero)
+            let lower = origin.withOffset(CGVector(dx: transcript.frame.width * 0.5, dy: visibleHeight * 0.8))
+            let upper = origin.withOffset(CGVector(dx: transcript.frame.width * 0.5, dy: visibleHeight * 0.2))
+            lower.press(forDuration: 0.05, thenDragTo: upper)
+        }
+        XCTAssertLessThanOrEqual(try viewportMetrics(in: web).transcriptBottomDistance, 2,
+                                 "The reader must actually reach the bottom before sticky-bottom behavior is tested")
+        XCTAssertTrue(web.staticTexts["Synthetic transcript anchor row"].isHittable, app.debugDescription)
     }
 
     private struct ObservedWindowGeometry {
