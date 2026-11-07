@@ -512,7 +512,12 @@ struct ConnectionSettingsView: View {
         }
     }
 
-    private var version: String { Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "—" }
+    private var version: String {
+        let number = Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "—"
+        guard let channel = (Bundle.main.object(forInfoDictionaryKey: "MetisReleaseChannel") as? String)?
+            .trimmingCharacters(in: .whitespacesAndNewlines), !channel.isEmpty else { return number }
+        return "\(number) \(channel)"
+    }
     private var pushStatus: String {
         if MobilePushAvailability.buildExplanation != nil { return String(localized: "Requires a push-enabled build") }
         return pushEnabled ? String(localized: "Enabled") : String(localized: "Disabled")

@@ -87,7 +87,10 @@ watchOS 8 deployment support in Xcode 26.6. A successful source typecheck at
 
 The iPhone marketing version is `0.1.$(CURRENT_PROJECT_VERSION)`. Build 14
 therefore reports **0.1.14** in iPhone settings; advancing the build to 15
-reports **0.1.15** without a separate UI version string.
+reports **0.1.15** without a separate UI version string. Settings appends the
+optional `METIS_RELEASE_CHANNEL` from the bundle, currently **Developer Beta**,
+so the current display is **0.1.14 Developer Beta**. Apple bundle version
+metadata remains numeric; an empty release channel shows only that version.
 
 Inside the iPhone Web workspace, top Sonner notices retain the library's
 desktop/mobile gap and add `env(safe-area-inset-top)`. This keeps them below
