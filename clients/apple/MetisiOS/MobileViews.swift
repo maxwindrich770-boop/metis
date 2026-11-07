@@ -457,6 +457,10 @@ struct ConnectionSettingsView: View {
                     }
                     if let accountError { Text(accountError).font(.footnote) }
                     LabeledContent("Version", value: version)
+                        .accessibilityElement(children: .ignore)
+                        .accessibilityLabel(Text("Version"))
+                        .accessibilityValue(Text(verbatim: version))
+                        .accessibilityIdentifier("metis.appVersion")
                 }
                 Section("Push devices") {
                     if let devicesError { Text(devicesError).font(.footnote) }

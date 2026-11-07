@@ -386,6 +386,16 @@ enum MetisAppWebPresentation {
           height: 100%;
           overflow: clip;
         }
+        /* Sonner is fixed to the window, outside the shell's status-bar inset.
+           Retain its own gap and add the live cutout inset only in the app. */
+        html:has(#metis-native-app-style) [data-sonner-toaster][data-y-position="top"] {
+          top: calc(env(safe-area-inset-top, 0px) + var(--offset-top, 32px)) !important;
+        }
+        @media (max-width: 600px) {
+          html:has(#metis-native-app-style) [data-sonner-toaster][data-y-position="top"] {
+            top: calc(env(safe-area-inset-top, 0px) + var(--mobile-offset-top, 16px)) !important;
+          }
+        }
         html[data-metis-native-app="ios"] .metis-shell {
           box-sizing: border-box;
           padding-top: env(safe-area-inset-top);

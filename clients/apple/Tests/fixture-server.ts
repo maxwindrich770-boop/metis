@@ -3,6 +3,7 @@
 import { once } from "node:events";
 import { mkdirSync, mkdtempSync, rmSync } from "node:fs";
 import { createServer } from "node:http";
+import { createRequire } from "node:module";
 import { tmpdir, userInfo } from "node:os";
 import path from "node:path";
 import { Readable } from "node:stream";
@@ -45,6 +46,7 @@ function webWorkspaceFixture(username: string, cookieName: string, externalAddre
     <a href="/?fixture=viewport-empty-large">Open synthetic large empty composer fixture</a>
     <a href="/?fixture=viewport-tall">Open synthetic tall composer transcript fixture</a>
     <a href="/?fixture=sidebar">Open synthetic sidebar fixture</a>
+    <a href="/?fixture=toasts">Open notification safe-area fixture</a>
     <a href="/?fixture=model-preferences">Open synthetic model preference storage fixture</a>
     <p id="error" role="alert"></p>
   </main>
@@ -118,6 +120,28 @@ function webWorkspaceFixture(username: string, cookieName: string, externalAddre
 
 
 // Dedicated, authenticated synthetic drawer fixture; no notebooks or automations are mutated.
+let toastFixtureBundle: Promise<string> | undefined;
+async function webToastFixture() {
+  // tsx already supplies esbuild to this fixture runner; no product dependency.
+  const require = createRequire(import.meta.url);
+  const { build } = createRequire(require.resolve("tsx"))("esbuild");
+  toastFixtureBundle ??= build({
+    entryPoints: [path.resolve("clients/apple/Tests/toast-fixture.tsx")],
+    bundle: true, write: false, minify: true, platform: "browser", format: "iife",
+    define: { "process.env.NODE_ENV": '"production"' },
+  }).then((result: { outputFiles: { text: string }[] }) => result.outputFiles[0].text);
+  const script = (await toastFixtureBundle).replaceAll("</script", "<\\/script");
+  return `<!doctype html><html lang="en"><head>
+    <meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+    <title>Notification safe-area fixture</title>
+    <style>body{margin:0;font:17px system-ui;background:#fff;color:#171717}
+      .metis-shell{padding:calc(16px + env(safe-area-inset-top)) 16px 16px}button{display:block;min-height:44px;margin:16px 0}
+      #safe-area-probe{position:fixed;visibility:hidden;padding:env(safe-area-inset-top) env(safe-area-inset-right) 0 env(safe-area-inset-left)}
+      #toast-metrics{display:block;padding:16px;font:12px monospace;overflow-wrap:anywhere}</style>
+    </head><body><div id="safe-area-probe"></div><div id="toast-root"></div>
+    <output id="toast-metrics">Notice geometry: pending</output><script>${script}</script></body></html>`;
+}
+
 function webSidebarFixture(username: string) {
   const expectedUsername = JSON.stringify(username).replaceAll("<", "\\u003c");
   return `<!doctype html><html lang="en"><head>
@@ -971,6 +995,7 @@ async function main() {
         const fixture = url.searchParams.get("fixture");
         const html = account && (fixture === "viewport" || fixture === "composer-zoom" || fixture === "viewport-empty" || fixture === "viewport-empty-flow" || fixture === "viewport-tall" || fixture === "viewport-empty-large"
           ? webViewportFixture(account.username, fixture === "composer-zoom", fixture === "viewport-empty", fixture === "viewport-empty-flow" || fixture === "viewport-empty-large", fixture === "viewport-tall", fixture === "viewport-empty-large")
+          : fixture === "toasts" ? await webToastFixture()
           : fixture === "sidebar" ? webSidebarFixture(account.username)
           : fixture === "model-preferences" ? webModelPreferenceFixture()
           : fixture === "app-controls-subframe" ? webAppControlsSubframeFixture()

@@ -83,6 +83,18 @@ build. Xcode 27.2's SDK requires 9.0 for a full build; Apple's matrix lists
 watchOS 8 deployment support in Xcode 26.6. A successful source typecheck at
 8.0 does not make a 9.0-minimum simulator artifact an 8.0 runtime test.
 
+## Build version and notification placement
+
+The iPhone marketing version is `0.1.$(CURRENT_PROJECT_VERSION)`. Build 14
+therefore reports **0.1.14** in iPhone settings; advancing the build to 15
+reports **0.1.15** without a separate UI version string.
+
+Inside the iPhone Web workspace, top Sonner notices retain the library's
+desktop/mobile gap and add `env(safe-area-inset-top)`. This keeps them below
+the notch or Dynamic Island, including after rotation. The rule applies only
+to the app's first-party presentation; it does not move the website's notices
+or change the default Web-based app interface.
+
 ## Native appearance
 
 The native sign-in keeps the Metis palette, labeled fields and original

@@ -1,6 +1,73 @@
 import XCTest
 
 final class MetisUITests: XCTestCase {
+    private struct NoticeMetrics: Decodable {
+        let count: Int
+        let safeTop: Double
+        let safeLeft: Double
+        let safeRight: Double
+        let minTop: Double?
+        let minLeft: Double?
+        let maxRight: Double?
+        let width: Double
+    }
+
+    @MainActor
+    func testNotificationsClearTheSafeAreaAndSettingsShowBuildVersion() throws {
+        let app = launch(additionalArguments: [
+            "-metis.app-lock-fixture", "unavailable", "-metis.app-lock-reset"
+        ])
+        defer { XCUIDevice.shared.orientation = .portrait }
+        XCUIDevice.shared.orientation = .portrait
+        signIn(app, server: "http://localhost:43100")
+        let web = authenticatedWebWorkspace(in: app)
+        let fixture = web.links["Open notification safe-area fixture"]
+        reveal(fixture, in: app)
+        fixture.tap()
+        let show = web.buttons["Show notification samples"]
+        XCTAssertTrue(show.waitForExistence(timeout: 10), app.debugDescription)
+        show.tap()
+        try assertNoticesClearSafeArea(in: app, web: web, portrait: true)
+        capture(app, named: "build14-real-sonner-synthetic-notices-portrait")
+        XCUIDevice.shared.orientation = .landscapeLeft
+        waitForLandscape(in: app)
+        try assertNoticesClearSafeArea(in: app, web: web, portrait: false)
+        capture(app, named: "build14-real-sonner-synthetic-notices-landscape")
+        web.buttons["Dismiss notification samples"].tap()
+        XCUIDevice.shared.orientation = .portrait
+        let fallback = app.buttons["metis.appControlsFallback"]
+        XCTAssertTrue(fallback.waitForExistence(timeout: 5))
+        fallback.tap()
+        let settings = app.buttons["metis.iPhoneSettings"]
+        revealInControls(settings, in: app)
+        settings.tap()
+        XCTAssertTrue(app.navigationBars["iPhone settings"].waitForExistence(timeout: 10))
+        let version = app.descendants(matching: .any)["metis.appVersion"].firstMatch
+        XCTAssertTrue(version.waitForExistence(timeout: 5))
+        XCTAssertEqual(version.value as? String, "0.1.14")
+        capture(app, named: "build14-version-in-native-settings")
+    }
+
+    @MainActor
+    private func assertNoticesClearSafeArea(in app: XCUIApplication, web: XCUIElement, portrait: Bool) throws {
+        web.buttons["Measure notification position"].tap()
+        let metrics = web.staticTexts.matching(NSPredicate(format: "label BEGINSWITH %@", "Notice geometry: {")).firstMatch
+        XCTAssertTrue(metrics.waitForExistence(timeout: 5), app.debugDescription)
+        // Read after Sonner has mounted all cards and completed its transition.
+        let mounted = XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in
+            guard let data = metrics.label.dropFirst("Notice geometry: ".count).data(using: .utf8),
+                  let value = try? JSONDecoder().decode(NoticeMetrics.self, from: data) else { return false }
+            return value.count == 3 && value.minTop != nil && (portrait ? value.width < 600 : value.width > 600)
+        }, object: metrics)
+        XCTAssertEqual(XCTWaiter.wait(for: [mounted], timeout: 8), .completed)
+        let data = try XCTUnwrap(metrics.label.dropFirst("Notice geometry: ".count).data(using: .utf8))
+        let value = try JSONDecoder().decode(NoticeMetrics.self, from: data)
+        if portrait { XCTAssertGreaterThan(value.safeTop, 0) }
+        XCTAssertGreaterThanOrEqual(try XCTUnwrap(value.minTop), value.safeTop + 8)
+        XCTAssertGreaterThanOrEqual(try XCTUnwrap(value.minLeft), value.safeLeft)
+        XCTAssertLessThanOrEqual(try XCTUnwrap(value.maxRight), value.width - value.safeRight)
+    }
+
     @MainActor
     func testInsecureServerIsRejected() {
         let app = launch()
