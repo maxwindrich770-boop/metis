@@ -75,6 +75,22 @@ companion while omitting Push and Share. The default helper behavior remains
 iPhone-only. A signed iPhone companion containing the updated relay is required;
 an older iPhone-only build cannot service the new Watch screens.
 
+A successful build and `codesign --verify` do not prove device provisioning.
+Build 17 was rejected on the physical Watch with `0xe8008015`: its Watch
+profiles contained only the iPhone UDID. Before device installation, use the
+actual device IDs and require this check to pass:
+
+```sh
+python3 clients/apple/scripts/verify-watch-install.py /path/to/Metis.app \
+  --phone-udid '<IPHONE_UDID>' --watch-udid '<WATCH_UDID>'
+```
+
+The Watch app **and** extension profiles must authorize the Watch. Select the
+real Watch as the Xcode run destination and allow Xcode to register it and
+regenerate profiles; a generic/target-only build can silently use a phone-only
+profile. If Xcode cannot read the Watch's OS/architecture, device provisioning
+remains blocked. Do not replace the profile by editing its signed contents.
+
 
 The Watch target declares `WATCHOS_DEPLOYMENT_TARGET = 8.0`. Its navigation
 uses `NavigationView` and selection-based `NavigationLink`, and its change

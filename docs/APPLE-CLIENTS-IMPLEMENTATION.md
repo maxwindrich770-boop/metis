@@ -1,5 +1,27 @@
 # Apple clients implementation
 
+## Watch installation failure — 10 November 2026
+
+Build 17 is **not provisioned for the physical Watch**. The iPhone installation
+log records actual Watch rejection `ApplicationVerificationFailed / 0xe8008015`
+at 12:15:08 local time: a valid provisioning profile was not found. Both Watch
+profiles authorize only the phone UDID. The previous successful build/signature
+checks did not check this device authorization.
+
+A fresh automatic target-only Watch build repeated the same phone-only profiles;
+it did not fix the failure. No replacement beta is reported as fixed or installed.
+The phone companion registry and a direct paired Watch lockdown connection report
+watchOS 8.8.2 and armv7k, but Xcode 26.6/27.2 destination discovery still reports
+an empty version and undefined architecture. Watch registration/profile creation
+through Xcode is consequently unresolved in this environment. No cached profile
+authorizes the Watch.
+
+`scripts/verify-watch-install.py` now checks phone/Watch/extension profile device
+IDs, expiry, team/application binding, bundle relationships and deep code
+signatures. Five regression tests include the observed phone-only profile case.
+Require this check to pass for the real device IDs before treating another build
+as installable. A successful signature check alone is insufficient.
+
 ## watchOS 8 chat controls — 10 November 2026
 
 Developer Beta 0.1.17 replaces the single-target Watch package with a watchOS 8
