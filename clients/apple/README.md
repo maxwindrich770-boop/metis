@@ -106,11 +106,30 @@ its account appearance settings. It is not a separately restyled Swift copy
 of the website. Native device sheets use the device's light/dark appearance. App controls use
 Liquid Glass on iOS 26+, with material controls on older supported iOS releases
 and opaque controls for reduced-transparency or increased-contrast preferences.
-Mobile drawer selections for New chat, Notebooks and Automations reuse the
-existing close action after navigation. The mobile drawer stays visible through
-its exit slide and hides only when it finishes; reopening shows it immediately,
-and reduced-motion settings skip the slide. Search, account controls, project
-expanders, New agent and desktop navigation retain their existing behavior.
+Mobile drawer selections for chats, projects, New chat, Notebooks, Automations
+and creation dialogs reuse the existing close action after navigation. A leftward
+swipe over drawer rows or the dimmed backdrop also closes it without selecting
+the row. Vertical scrolling, short movements, text selection, editable fields,
+multiple touches and main-pane gestures retain their normal behavior. The drawer
+stays visible through its exit slide and hides only when it finishes; reopening
+shows it immediately, and reduced-motion settings skip the slide. Search keeps
+the drawer until a result is selected; account menus, project expanders and
+desktop navigation retain their existing behavior.
+
+The provider Usage tooltip fills portrait phone width with the existing 8-point
+collision gutter on each side and centered text. Landscape retains its compact
+layout. Decoration follows the trigger's accessible tooltip relationship and
+does not depend on a provider name, model or quota value. Context and unrelated
+tooltips retain their existing size; live usage data is unchanged.
+On 10 November 2026, four focused iOS 27.2 Simulator tests passed: drawer
+swipes over chat rows/backdrop, destination selection with visible exit frames,
+search geometry, and the real quota component across portrait/landscape rotation.
+Portrait measured an 8-point gutter on both sides with centered text; landscape
+and Context tooltips retained their 256-point width. These fixtures use synthetic
+data, not live Codex quotas. The TypeScript check, Web workspace policy smoke and
+48 app-lock smoke checks passed. A signed iPhone Release build was compiled and
+verified at 0.1.14 Developer Beta; this pass did not install it on a physical device.
+
 The drawer and its account/settings footer keep full-window geometry while
 search opens the input surface; the keyboard covers the footer. Search uses
 readable text without focus zoom, a stable phone-dialog top and a results list

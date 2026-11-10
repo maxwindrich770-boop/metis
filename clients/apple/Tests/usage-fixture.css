@@ -1,0 +1,16 @@
+@import "tailwindcss" source(none);
+@source "../../../components/quota-gauges.tsx";
+@source "../../../components/ui/tooltip.tsx";
+@source "./usage-fixture.tsx";
+@theme {
+  --color-background: white;
+  --color-foreground: #171717;
+  --color-popover: white;
+  --color-popover-foreground: #171717;
+  --color-border: #dddddd;
+  --color-muted-foreground: #666666;
+}
+body { margin: 0; font-family: system-ui; }
+[aria-label="Synthetic composer controls"] { padding-top: calc(16px + env(safe-area-inset-top)); }
+button { min-height: 44px; }
+#usage-metrics { display: block; margin: 16px; overflow-wrap: anywhere; font: 11px monospace; }

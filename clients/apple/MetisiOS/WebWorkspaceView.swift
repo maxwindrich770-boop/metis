@@ -455,6 +455,27 @@ enum MetisAppWebPresentation {
             pointer-events: none;
           }
         }
+        /* Preserve Radix's 8-point collision gutter; landscape stays compact. */
+        @media (orientation: portrait) and (max-width: 767px) {
+          html[data-metis-native-app="ios"] [data-metis-app-usage] {
+            width: calc(100vw - 16px);
+            max-width: calc(100vw - 16px);
+            box-sizing: border-box;
+            text-align: center;
+            justify-content: center;
+          }
+          html[data-metis-native-app="ios"] [data-metis-app-usage] > div {
+            width: 100%;
+          }
+          html[data-metis-native-app="ios"] [data-metis-app-usage] .flex {
+            justify-content: center;
+            gap: 0.5rem;
+          }
+          html[data-metis-native-app="ios"] [data-metis-app-usage] .items-start {
+            flex-direction: column;
+            align-items: center;
+          }
+        }
         /* Match the content gutters inside the system-safe area. */
         html[data-metis-native-app="ios"] aside[aria-label="Chats sidebar"] [aria-label="Metis"]:not([role="img"]) {
           padding-top: var(--metis-app-sidebar-gutter);
@@ -674,6 +695,16 @@ enum MetisAppWebPresentation {
           const header = toggle.closest('header');
           if (header && !header.hasAttribute('data-metis-app-header')) header.dataset.metisAppHeader = '';
         }
+        // Follow the accessible tooltip relationship, independent of provider
+        // name and quota values. Context and unrelated tips stay untouched.
+        for (const trigger of document.querySelectorAll('button[aria-describedby]')) {
+          const label = trigger.getAttribute('aria-label') || '';
+          if (!label.includes(' usage:') && !label.endsWith(' usage unavailable')) continue;
+          for (const id of trigger.getAttribute('aria-describedby').split(/\s+/)) {
+            const surface = document.getElementById(id)?.closest('[data-slot="tooltip-content"]');
+            if (surface && !surface.hasAttribute('data-metis-app-usage')) surface.dataset.metisAppUsage = '';
+          }
+        }
         for (const input of document.querySelectorAll('.composer-input-area')) {
           const form = input.closest('form');
           if (form && !form.hasAttribute('data-metis-app-composer')) form.dataset.metisAppComposer = '';
@@ -739,23 +770,71 @@ enum MetisAppWebPresentation {
         announceAvailability(Boolean(document.querySelector('[data-metis-app-controls]')));
       };
 
+      const mobileSidebarClose = sidebar => {
+        if (!sidebar?.isConnected || !matchMedia('(max-width: 767px)').matches) return null;
+        const close = Array.from(sidebar.parentElement?.children || [])
+          .find(element => element.matches('button[aria-label="Close sidebar"]'));
+        return close && close.tabIndex >= 0 ? close : null;
+      };
       document.addEventListener('click', event => {
         if (!event.isTrusted || !(event.target instanceof Element)) return;
-        const button = event.target.closest('button');
+        const button = event.target.closest('button, a[href]');
         const sidebar = button?.closest('aside[aria-label="Chats sidebar"]');
-        const navigation = sidebar?.querySelector('.metis-sidebar-scroll')?.previousElementSibling;
-        const destination = button?.querySelector(':scope > span')?.textContent.trim();
-        if (!sidebar || !navigation || button.parentElement !== navigation ||
-            button.disabled || !['New chat', 'Notebooks', 'Automations'].includes(destination)) return;
-        // Defer until the original navigation handler and its cancellation state
-        // have completed. Reuse the existing mobile close action.
+        if (!sidebar || button.matches(':disabled, [aria-disabled="true"]')) return;
+        const navigation = sidebar.querySelector('.metis-sidebar-scroll')?.previousElementSibling;
+        const label = button.getAttribute('aria-label');
+        // Expanders, filters and action menus retain their intermediate state.
+        // Search keeps the drawer until a result is selected; creation dialogs close it.
+        const destination = (button.parentElement === navigation && !button.querySelector('kbd')) ||
+          button.matches('a[href], button[title]:not([aria-haspopup]):not([aria-expanded])') ||
+          Boolean(button.closest('section[aria-label="Project agents"]') && button.classList.contains('flex-1')) ||
+          ['New project', 'New chat', 'New chat in project', 'New agent'].includes(label);
+        if (!destination) return;
+        // Let the original action select its content before closing its drawer.
         setTimeout(() => {
-          if (event.defaultPrevented || !sidebar.isConnected) return;
-          const close = Array.from(sidebar.parentElement?.children || [])
-            .find(element => element.matches('button[aria-label="Close sidebar"]'));
-          if (close && close.tabIndex >= 0) close.click();
+          if (!event.defaultPrevented) mobileSidebarClose(sidebar)?.click();
         }, 0);
       }, true);
+
+      // Accept swipes over chat buttons as well as empty drawer space and its
+      // backdrop. Main-pane gestures and editable/menu controls stay untouched.
+      let drawerSwipe = null;
+      const selectedText = () => {
+        const selection = window.getSelection();
+        return selection && !selection.isCollapsed && selection.toString().trim();
+      };
+      document.addEventListener('touchstart', event => {
+        drawerSwipe = null;
+        if (!event.isTrusted || event.touches.length !== 1 ||
+            !(event.target instanceof Element) || selectedText()) return;
+        const sidebar = document.querySelector('aside[aria-label="Chats sidebar"]');
+        const close = mobileSidebarClose(sidebar);
+        if (!close || (!sidebar.contains(event.target) && !close.contains(event.target)) ||
+            event.target.closest('input, textarea, select, [contenteditable="true"], [data-swipe-ignore], [role="slider"], [role="menu"], [role="dialog"]')) return;
+        const touch = event.touches[0];
+        drawerSwipe = { sidebar, id: touch.identifier, x: touch.clientX, y: touch.clientY };
+      }, { capture: true, passive: true });
+      document.addEventListener('touchmove', event => {
+        if (!drawerSwipe) return;
+        const touch = Array.from(event.touches).find(item => item.identifier === drawerSwipe.id);
+        if (event.touches.length !== 1 || !touch ||
+            (Math.abs(touch.clientY - drawerSwipe.y) > 12 &&
+             Math.abs(touch.clientY - drawerSwipe.y) > Math.abs(touch.clientX - drawerSwipe.x))) drawerSwipe = null;
+      }, { capture: true, passive: true });
+      document.addEventListener('touchcancel', () => { drawerSwipe = null; }, { passive: true });
+      document.addEventListener('touchend', event => {
+        const start = drawerSwipe;
+        drawerSwipe = null;
+        if (!event.isTrusted || !start || event.touches.length || selectedText()) return;
+        const touch = Array.from(event.changedTouches).find(item => item.identifier === start.id);
+        if (!touch) return;
+        const dx = touch.clientX - start.x, dy = touch.clientY - start.y;
+        const close = mobileSidebarClose(start.sidebar);
+        if (!close || dx > -64 || Math.abs(dx) < Math.abs(dy) * 1.35) return;
+        event.preventDefault();
+        event.stopPropagation();
+        close.click();
+      }, { capture: true, passive: false });
 
       document.addEventListener('click', event => {
         const target = event.target instanceof Element
@@ -775,7 +854,7 @@ enum MetisAppWebPresentation {
         });
       };
       const observer = new MutationObserver(scheduleDecoration);
-      observer.observe(document.body, { childList: true, subtree: true });
+      observer.observe(document.body, { childList: true, subtree: true, attributes: true, attributeFilter: ['aria-describedby'] });
       window.addEventListener('resize', scheduleDecoration);
       window.addEventListener('pageshow', () => {
         lastAvailability = null;

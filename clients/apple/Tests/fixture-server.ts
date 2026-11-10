@@ -1,7 +1,7 @@
 // Exercise the real Metis handlers and worker over loopback with a disposable
 // SQLite database and a deterministic model fixture.
 import { once } from "node:events";
-import { mkdirSync, mkdtempSync, rmSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { createServer } from "node:http";
 import { createRequire } from "node:module";
 import { tmpdir, userInfo } from "node:os";
@@ -47,6 +47,7 @@ function webWorkspaceFixture(username: string, cookieName: string, externalAddre
     <a href="/?fixture=viewport-tall">Open synthetic tall composer transcript fixture</a>
     <a href="/?fixture=sidebar">Open synthetic sidebar fixture</a>
     <a href="/?fixture=toasts">Open notification safe-area fixture</a>
+    <a href="/?fixture=usage">Open usage layout fixture</a>
     <a href="/?fixture=model-preferences">Open synthetic model preference storage fixture</a>
     <p id="error" role="alert"></p>
   </main>
@@ -125,12 +126,12 @@ async function webToastFixture() {
   // tsx already supplies esbuild to this fixture runner; no product dependency.
   const require = createRequire(import.meta.url);
   const { build } = createRequire(require.resolve("tsx"))("esbuild");
-  toastFixtureBundle ??= build({
+  const bundle: Promise<string> = toastFixtureBundle ??= build({
     entryPoints: [path.resolve("clients/apple/Tests/toast-fixture.tsx")],
     bundle: true, write: false, minify: true, platform: "browser", format: "iife",
     define: { "process.env.NODE_ENV": '"production"' },
   }).then((result: { outputFiles: { text: string }[] }) => result.outputFiles[0].text);
-  const script = (await toastFixtureBundle).replaceAll("</script", "<\\/script");
+  const script = (await bundle).replaceAll("</script", "<\\/script");
   return `<!doctype html><html lang="en"><head>
     <meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
     <title>Notification safe-area fixture</title>
@@ -140,6 +141,28 @@ async function webToastFixture() {
       #toast-metrics{display:block;padding:16px;font:12px monospace;overflow-wrap:anywhere}</style>
     </head><body><div id="safe-area-probe"></div><div id="toast-root"></div>
     <output id="toast-metrics">Notice geometry: pending</output><script>${script}</script></body></html>`;
+}
+
+let usageFixtureBundle: Promise<{ script: string; css: string }> | undefined;
+async function webUsageFixture() {
+  const require = createRequire(import.meta.url);
+  const { build } = createRequire(require.resolve("tsx"))("esbuild");
+  usageFixtureBundle ??= Promise.all([
+    build({
+      entryPoints: [path.resolve("clients/apple/Tests/usage-fixture.tsx")],
+      bundle: true, write: false, minify: true, platform: "browser", format: "iife",
+      jsx: "automatic", define: { "process.env.NODE_ENV": '"production"' },
+    }),
+    require("postcss")([require("@tailwindcss/postcss")()]).process(
+      readFileSync("clients/apple/Tests/usage-fixture.css", "utf8"),
+      { from: path.resolve("clients/apple/Tests/usage-fixture.css") }),
+  ]).then(([js, css]) => ({ script: js.outputFiles[0].text, css: css.css }));
+  const bundle = await usageFixtureBundle;
+  return `<!doctype html><html lang="en"><head><meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+    <title>Synthetic usage layout fixture</title><style>${bundle.css}</style></head>
+    <body><div id="usage-root"></div><output id="usage-metrics">Usage geometry: pending</output>
+    <script>${bundle.script.replaceAll("</script", "<\\/script")}</script></body></html>`;
 }
 
 function webSidebarFixture(username: string) {
@@ -182,7 +205,12 @@ aside[aria-label="Chats sidebar"]{position:fixed;inset:0 auto 0 0;z-index:20;wid
 <button id="nav-automations" type="button"><span>Automations</span></button>
 </div>
 <div class="metis-sidebar-scroll">
-<button id="project-expand" aria-label="Expand synthetic project"><span>Automations</span></button>
+<button id="fixture-chat" title="Fixture chat"><span>Fixture chat</span></button>
+<button id="fixture-project" title="Fixture project"><span>Fixture project</span></button>
+<button id="fixture-disabled" title="Disabled destination" disabled>Disabled destination</button>
+<button id="fixture-cancelled" title="Cancelled destination">Cancelled destination</button>
+<button id="fixture-actions" aria-haspopup="menu" title="Chat actions">Chat actions</button>
+<button id="project-expand" aria-expanded="false" aria-label="Expand synthetic project"><span>Automations</span></button>
 <button id="programmatic-nav">Programmatically select New chat</button>
 <button id="agent-mode">Use synthetic agent destination</button>
 </div>
@@ -248,6 +276,9 @@ aside[aria-label="Chats sidebar"]{position:fixed;inset:0 auto 0 0;z-index:20;wid
       // never closes the mobile drawer. The app must invoke the existing close control.
       report();
     }
+    el("fixture-chat").addEventListener("click", () => select("Fixture chat"));
+    el("fixture-project").addEventListener("click", () => select("Fixture project"));
+    el("fixture-cancelled").addEventListener("click", event => event.preventDefault());
     el("nav-new").addEventListener("click", () => select("New chat"));
     el("nav-notebooks").addEventListener("click", () => select("Notebooks"));
     el("nav-automations").addEventListener("click", () => select("Automations"));
@@ -996,6 +1027,7 @@ async function main() {
         const html = account && (fixture === "viewport" || fixture === "composer-zoom" || fixture === "viewport-empty" || fixture === "viewport-empty-flow" || fixture === "viewport-tall" || fixture === "viewport-empty-large"
           ? webViewportFixture(account.username, fixture === "composer-zoom", fixture === "viewport-empty", fixture === "viewport-empty-flow" || fixture === "viewport-empty-large", fixture === "viewport-tall", fixture === "viewport-empty-large")
           : fixture === "toasts" ? await webToastFixture()
+          : fixture === "usage" ? await webUsageFixture()
           : fixture === "sidebar" ? webSidebarFixture(account.username)
           : fixture === "model-preferences" ? webModelPreferenceFixture()
           : fixture === "app-controls-subframe" ? webAppControlsSubframeFixture()

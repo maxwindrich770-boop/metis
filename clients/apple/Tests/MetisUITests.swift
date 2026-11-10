@@ -1438,13 +1438,120 @@ final class MetisUITests: XCTestCase {
     }
 
 
+    private struct UsageLayout: Decodable {
+        let width: Double
+        let usage: Bool
+        let left: Double?
+        let right: Double?
+        let cardWidth: Double?
+        let titleCenter: Double?
+        let align: String?
+    }
+
+    @MainActor
+    func testUsagePopoverFillsPortraitAndRetainsLandscapeLayout() throws {
+        XCUIDevice.shared.orientation = .portrait
+        defer { XCUIDevice.shared.orientation = .portrait }
+        let app = launch()
+        signIn(app, server: "http://localhost:43100")
+        let web = authenticatedWebWorkspace(in: app)
+        let link = web.links["Open usage layout fixture"]
+        reveal(link, in: app)
+        link.tap()
+        let usage = web.buttons["Synthetic provider usage: 60% left"]
+        XCTAssertTrue(usage.waitForExistence(timeout: 10), app.debugDescription)
+        usage.tap()
+        let portrait = try usageLayout(in: web, portrait: true, usage: true)
+        XCTAssertEqual(try XCTUnwrap(portrait.left), 8, accuracy: 2)
+        XCTAssertEqual(try XCTUnwrap(portrait.right), portrait.width - 8, accuracy: 2)
+        XCTAssertEqual(try XCTUnwrap(portrait.titleCenter), portrait.width / 2, accuracy: 2)
+        XCTAssertEqual(portrait.align, "center")
+        capture(app, named: "usage-real-component-portrait-full-width")
+
+        XCUIDevice.shared.orientation = .landscapeLeft
+        waitForLandscape(in: app)
+        let landscape = try usageLayout(in: web, portrait: false, usage: true)
+        XCTAssertEqual(try XCTUnwrap(landscape.cardWidth), 256, accuracy: 2)
+        XCTAssertEqual(landscape.align, "start")
+        capture(app, named: "usage-real-component-landscape-unchanged")
+
+        XCUIDevice.shared.orientation = .portrait
+        _ = try usageLayout(in: web, portrait: true, usage: true)
+        usage.tap()
+        web.buttons["Context: 100 of 1K effective input tokens used"].tap()
+        let context = try usageLayout(in: web, portrait: true, usage: false)
+        XCTAssertEqual(try XCTUnwrap(context.cardWidth), 256, accuracy: 2,
+                       "Context and other tooltips must retain their existing size")
+        capture(app, named: "context-tooltip-portrait-unchanged")
+    }
+
+    @MainActor
+    private func usageLayout(in web: XCUIElement, portrait: Bool, usage: Bool) throws -> UsageLayout {
+        let prefix = "Usage geometry: "
+        let report = web.staticTexts.matching(NSPredicate(format: "label BEGINSWITH %@", prefix + "{")).firstMatch
+        let settled = XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in
+            guard report.exists, let data = String(report.label.dropFirst(prefix.count)).data(using: .utf8),
+                  let value = try? JSONDecoder().decode(UsageLayout.self, from: data),
+                  let width = value.cardWidth else { return false }
+            return value.usage == usage && (portrait ? value.width < 600 : value.width > 600)
+                && (portrait && usage ? abs(width - value.width + 16) < 2 : abs(width - 256) < 2)
+        }, object: web)
+        XCTAssertEqual(XCTWaiter.wait(for: [settled], timeout: 10), .completed)
+        let data = try XCTUnwrap(String(report.label.dropFirst(prefix.count)).data(using: .utf8))
+        return try JSONDecoder().decode(UsageLayout.self, from: data)
+    }
+
+    @MainActor
+    func testSidebarSwipeDismissesOverChatRowsAndBackdropWithoutSelecting() throws {
+        XCUIDevice.shared.orientation = .portrait
+        let app = launch()
+        signIn(app, server: "http://localhost:43100")
+        let web = try openSyntheticSidebarFixture(in: app)
+        web.buttons["Open sidebar"].tap()
+        let row = web.buttons["Fixture chat"]
+        XCTAssertTrue(row.isHittable)
+        let start = row.coordinate(withNormalizedOffset: CGVector(dx: 0.85, dy: 0.5))
+        // Vertical movement and a short drag must not dismiss or select a row.
+        start.press(forDuration: 0.02, thenDragTo: start.withOffset(CGVector(dx: 0, dy: -80)))
+        XCTAssertTrue(try sidebarState(in: web).sidebarOpen)
+        let shortStart = web.buttons["Expand synthetic project"].coordinate(withNormalizedOffset: CGVector(dx: 0.85, dy: 0.5))
+        shortStart.press(forDuration: 0.02, thenDragTo: shortStart.withOffset(CGVector(dx: -24, dy: 0)))
+        XCTAssertTrue(try sidebarState(in: web).sidebarOpen)
+        start.press(forDuration: 0.02, thenDragTo: row.coordinate(withNormalizedOffset: CGVector(dx: 0.1, dy: 0.5)))
+        try awaitSwipeClose(in: web, count: 1)
+        var state = try sidebarState(in: web)
+        XCTAssertEqual(state.activeDestination, "New chat")
+        XCTAssertEqual(state.selectionCount, 0)
+        let motion = try XCTUnwrap(state.closeMotion)
+        XCTAssertFalse(motion.hiddenBeforeOffscreen)
+        if !motion.reducedMotion { XCTAssertGreaterThan(motion.visibleMovingFrames, 1) }
+        capture(app, named: "sidebar-swipe-over-chat-row-closed")
+
+        web.buttons["Open sidebar"].tap()
+        let backdrop = web.coordinate(withNormalizedOffset: CGVector(dx: 0.97, dy: 0.5))
+        backdrop.press(forDuration: 0.02, thenDragTo: backdrop.withOffset(CGVector(dx: -110, dy: 0)))
+        try awaitSwipeClose(in: web, count: 2)
+        state = try sidebarState(in: web)
+        XCTAssertEqual(state.selectionCount, 0)
+        XCTAssertEqual(state.activeDestination, "New chat")
+    }
+
+    @MainActor
+    private func awaitSwipeClose(in web: XCUIElement, count: Int) throws {
+        let closed = XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in
+            guard let value = try? self.sidebarState(in: web) else { return false }
+            return !value.sidebarOpen && value.closeCount == count && value.closeMotion?.revision == count
+        }, object: web)
+        XCTAssertEqual(XCTWaiter.wait(for: [closed], timeout: 6), .completed)
+    }
+
     @MainActor
     func testSyntheticSidebarDestinationsCloseDrawerWithoutExtraTap() throws {
         let app = launch()
         signIn(app, server: "http://localhost:43100")
         let web = try openSyntheticSidebarFixture(in: app)
         var expectedCloses = 0
-        for destination in ["Notebooks", "Automations", "New chat", "Notebooks"] {
+        for destination in ["Notebooks", "Automations", "New chat", "Fixture chat", "Fixture project"] {
             web.buttons["Open sidebar"].tap()
             XCTAssertTrue(try sidebarState(in: web).sidebarOpen)
             web.buttons[destination].tap()
@@ -1483,8 +1590,17 @@ final class MetisUITests: XCTestCase {
                       "Synthetic, untrusted navigation must not trigger the native drawer hook")
         web.buttons["Use synthetic agent destination"].tap()
         web.buttons["New agent"].tap()
-        XCTAssertTrue(try sidebarState(in: web).sidebarOpen,
-                      "New agent opens its own flow and is excluded from this navigation change")
+        let agentClosed = XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in
+            (try? self.sidebarState(in: web).sidebarOpen) == false
+        }, object: web)
+        XCTAssertEqual(XCTWaiter.wait(for: [agentClosed], timeout: 5), .completed)
+        expectedCloses += 1
+        XCTAssertTrue(web.staticTexts["Synthetic new-agent dialog opened"].exists)
+        web.buttons["Open sidebar"].tap()
+        web.buttons["Cancelled destination"].tap()
+        XCTAssertTrue(try sidebarState(in: web).sidebarOpen)
+        web.descendants(matching: .any)["Chat actions"].firstMatch.tap()
+        XCTAssertTrue(try sidebarState(in: web).sidebarOpen)
         web.buttons["Open account menu"].tap()
         XCTAssertTrue(try sidebarState(in: web).accountMenuOpen)
         XCTAssertTrue(try sidebarState(in: web).sidebarOpen,
