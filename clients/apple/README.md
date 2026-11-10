@@ -85,11 +85,10 @@ watchOS 8 deployment support in Xcode 26.6. A successful source typecheck at
 
 ## Build version and notification placement
 
-The iPhone marketing version is `0.1.$(CURRENT_PROJECT_VERSION)`. Build 14
-therefore reports **0.1.14** in iPhone settings; advancing the build to 15
-reports **0.1.15** without a separate UI version string. Settings appends the
-optional `METIS_RELEASE_CHANNEL` from the bundle, currently **Developer Beta**,
-so the current display is **0.1.14 Developer Beta**. Apple bundle version
+The iPhone marketing version is `0.1.$(CURRENT_PROJECT_VERSION)`. Build 15
+therefore reports **0.1.15** in iPhone settings without a separate UI version
+string. Settings appends the optional `METIS_RELEASE_CHANNEL` from the bundle,
+currently **Developer Beta**, so the current display is **0.1.15 Developer Beta**. Apple bundle version
 metadata remains numeric; an empty release channel shows only that version.
 
 Inside the iPhone Web workspace, top Sonner notices retain the library's
@@ -127,8 +126,10 @@ search geometry, and the real quota component across portrait/landscape rotation
 Portrait measured an 8-point gutter on both sides with centered text; landscape
 and Context tooltips retained their 256-point width. These fixtures use synthetic
 data, not live Codex quotas. The TypeScript check, Web workspace policy smoke and
-48 app-lock smoke checks passed. A signed iPhone Release build was compiled and
-verified at 0.1.14 Developer Beta; this pass did not install it on a physical device.
+48 app-lock smoke checks passed. A signed iPhone Release build was compiled and verified at 0.1.15 Developer Beta.
+After explicit operator approval, it was installed on the connected iPhone 14;
+the device reported version 0.1.15/build 15 and the launched app process remained
+present. Physical interaction with the live account was not automated.
 
 The drawer and its account/settings footer keep full-window geometry while
 search opens the input surface; the keyboard covers the footer. Search uses
