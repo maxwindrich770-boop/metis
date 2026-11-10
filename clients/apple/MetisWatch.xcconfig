@@ -9,8 +9,11 @@ PRODUCT_NAME = MetisWatch
 ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon
 METIS_PHONE_BUNDLE_ID = dev.metis.apple.prototype
 PRODUCT_BUNDLE_IDENTIFIER = $(METIS_PHONE_BUNDLE_ID).watchkitapp
-MARKETING_VERSION = 0.1.0
-CURRENT_PROJECT_VERSION = 1
+MARKETING_VERSION = 0.1.$(CURRENT_PROJECT_VERSION)
+CURRENT_PROJECT_VERSION = 17
+// Series 3 needs armv7k; newer Watches use arm64_32.
+ARCHS[sdk=watchos*] = armv7k arm64_32
+LD_RUNPATH_SEARCH_PATHS = $(inherited) @executable_path/Frameworks @executable_path/../../Frameworks
 GENERATE_INFOPLIST_FILE = YES
 INFOPLIST_FILE = MetisWatch/Info.plist
 INFOPLIST_KEY_CFBundleDisplayName = Metis

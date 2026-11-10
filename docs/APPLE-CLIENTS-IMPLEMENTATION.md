@@ -1,5 +1,45 @@
 # Apple clients implementation
 
+## watchOS 8 chat controls — 10 November 2026
+
+Developer Beta 0.1.17 replaces the single-target Watch package with a watchOS 8
+WatchKit container and SwiftUI extension. Xcode 26.6 compiles and links armv7k
+and arm64_32; both Mach-O slices report minimum watchOS 8.0. Personal Team
+preparation now has an opt-in `--include-watch`; the default remains iPhone-only.
+Push/Share entitlements remain omitted. The signed iPhone app embeds the Watch
+container and extension.
+
+The Watch lists recent chats, creates chats, displays recent message excerpts
+in a separate conversation screen, and submits confirmed text/dictation prompts.
+It loads models and all advertised parameter choices from the authenticated
+iPhone relay, in bounded pages. Missing options remain unavailable. Defaults
+and saved values are checked on switches; the iPhone reloads discovery and
+validates submitted parameters before sending through the existing chat API.
+No usage/quota is relayed. No credentials are transferred to the Watch.
+Session contexts carry a fresh revision so account changes clear old screens.
+
+Verification: model-contract Swift smoke (unknown capabilities, defaults,
+switches, numeric bounds, duplicates and Codable relay), Personal Team packaging
+tests, existing Swift API smoke and mobile Apple server tests. Debug simulator
+fixtures exercise the real Watch views without live accounts; fixture code is
+excluded from release/device builds. The available simulator runs watchOS 27.2,
+not watchOS 8; it is layout/launch evidence only.
+
+Build environment: Xcode 26.6 Swift/compiler/linker and watchOS 26.5 SDK.
+Its asset compiler required a matching simulator component; for this local
+build only, `ASSETCATALOG_EXEC` used Xcode 27.2's asset compiler with the original
+8.0 deployment setting. The optional 26.5 runtime download was cancelled after
+the complete signed package built. No Xcode installation or production service
+was replaced. Build output and raw evidence are in the Mac Desktop folder
+`metis apple/Entwicklung/Build17-WatchOS8-Final`.
+
+Hardware boundary: iPhone installation and launch succeeded. The paired Series 3
+is listed by Xcode, but direct CoreDevice queries timed out; Watch installation,
+watchOS 8 execution, dictation and live phone-to-Watch round trips are not yet
+confirmed. Install the bundled companion through the iPhone Watch app and enable
+Watch access in Metis for hardware acceptance.
+
+
 ## First delivery
 
 Branch `feat/apple-clients`, based on upstream `master` at

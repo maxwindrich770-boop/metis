@@ -61,6 +61,21 @@ images. Metis uploads only when you tap **Send**.
 
 ## watchOS 8 compatibility
 
+The companion uses a WatchKit app container plus a SwiftUI WatchKit extension,
+not the watchOS 9 single-target package. Xcode 26.6 builds the extension for
+armv7k (Series 3) and arm64_32 with a minimum OS of 8.0. The Watch shows recent
+chats, the latest conversation messages, new-chat creation and prompt entry.
+Model names, account labels, effort, fast mode and other available parameter
+choices come from authenticated server discovery. They are revalidated on model
+switch and again on the iPhone before submitting each prompt. No quota/usage
+endpoint is requested or displayed by the Watch.
+
+Use `--include-watch` with the Personal Team preparation helper to retain the
+companion while omitting Push and Share. The default helper behavior remains
+iPhone-only. A signed iPhone companion containing the updated relay is required;
+an older iPhone-only build cannot service the new Watch screens.
+
+
 The Watch target declares `WATCHOS_DEPLOYMENT_TARGET = 8.0`. Its navigation
 uses `NavigationView` and selection-based `NavigationLink`, and its change
 handlers use the single-value `onChange` overload. The minimum is watchOS 8
@@ -89,10 +104,10 @@ watchOS 8 deployment support in Xcode 26.6. A successful source typecheck at
 
 ## Build version and notification placement
 
-The iPhone marketing version is `0.1.$(CURRENT_PROJECT_VERSION)`. Build 15
-therefore reports **0.1.15** in iPhone settings without a separate UI version
+The iPhone marketing version is `0.1.$(CURRENT_PROJECT_VERSION)`. Build 17
+therefore reports **0.1.17** in iPhone settings without a separate UI version
 string. Settings appends the optional `METIS_RELEASE_CHANNEL` from the bundle,
-currently **Developer Beta**, so the current display is **0.1.15 Developer Beta**. Apple bundle version
+currently **Developer Beta**, so the current display is **0.1.17 Developer Beta**. Apple bundle version
 metadata remains numeric; an empty release channel shows only that version.
 
 Inside the iPhone Web workspace, top Sonner notices retain the library's
@@ -262,7 +277,7 @@ swiftc -parse-as-library clients/apple/MetisiOS/MetisAppLock.swift \
 # Use a fresh fixture/database for the API smoke test, separate from UI tests.
 node --import tsx clients/apple/Tests/fixture-server.ts 43102
 # In another terminal:
-swiftc -D DEBUG -parse-as-library clients/apple/MetisiOS/MetisAPI.swift \
+swiftc -D DEBUG -parse-as-library clients/apple/Shared/ModelContract.swift clients/apple/MetisiOS/MetisAPI.swift \
   clients/apple/Tests/Smoke.swift -o /tmp/metis-apple-api-smoke
 /tmp/metis-apple-api-smoke http://localhost:43102
 
@@ -331,7 +346,7 @@ builds require HTTPS.
 To run the API smoke test on the Mac while the fixture is running:
 
 ```sh
-swiftc -D DEBUG clients/apple/MetisiOS/MetisAPI.swift clients/apple/Tests/Smoke.swift -o /tmp/metis-apple-smoke
+swiftc -D DEBUG clients/apple/Shared/ModelContract.swift clients/apple/MetisiOS/MetisAPI.swift clients/apple/Tests/Smoke.swift -o /tmp/metis-apple-smoke
 /tmp/metis-apple-smoke
 ```
 

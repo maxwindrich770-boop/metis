@@ -192,15 +192,6 @@ struct MetisNotification: Decodable, Identifiable {
     let readAt: String?
 }
 
-struct MetisModel: Decodable, Identifiable {
-    let id: String
-    let legacyIds: [String]?
-    let displayName: String?
-    let name: String?
-    let label: String?
-    var title: String { displayName ?? label ?? name ?? id }
-}
-
 struct MetisProject: Decodable, Identifiable {
     let id: String
     let name: String
@@ -228,6 +219,7 @@ struct ChatPage: Decodable {
         let title: String
         let runStatus: String?
         let modelId: String?
+        let modelParams: [ModelSelection]?
         let pendingQuestion: MetisQuestion?
         let pendingApproval: PendingApproval?
 
@@ -387,6 +379,7 @@ final class MetisAPI {
         let message: String
         let modelId: String?
         let uploadIds: [String]?
+        let modelParams: [ModelSelection]?
     }
     private struct AcceptedRun: Decodable { let jobId: String; let status: String }
     private struct EventPage: Decodable {
@@ -676,8 +669,8 @@ final class MetisAPI {
         return destination
     }
 
-    func send(chatID: String, message: String, messageID: String, modelID: String? = nil, uploadIDs: [String]? = nil) async throws -> MetisRun {
-        let body = try JSONEncoder().encode(Submission(chatId: chatID, messageId: messageID, message: message, modelId: modelID, uploadIds: uploadIDs))
+    func send(chatID: String, message: String, messageID: String, modelID: String? = nil, uploadIDs: [String]? = nil, modelParams: [ModelSelection]? = nil) async throws -> MetisRun {
+        let body = try JSONEncoder().encode(Submission(chatId: chatID, messageId: messageID, message: message, modelId: modelID, uploadIds: uploadIDs, modelParams: modelParams))
         let response: AcceptedRun = try await request(["chat"], method: "POST", body: body)
         return MetisRun(id: response.jobId, messageId: messageID, status: response.status)
     }

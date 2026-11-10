@@ -55,9 +55,18 @@ private final class PhoneConnection: NSObject, ObservableObject, WCSessionDelega
         guard WCSession.isSupported() else { return }
         WCSession.default.delegate = self
         WCSession.default.activate()
+        #if DEBUG && targetEnvironment(simulator)
+        if ProcessInfo.processInfo.environment["METIS_WATCH_FIXTURE"] == "1" {
+            reachable = true
+            sessionAvailable = true
+        }
+        #endif
     }
 
     nonisolated func session(_ session: WCSession, activationDidCompleteWith activationState: WCSessionActivationState, error: Error?) {
+        #if DEBUG && targetEnvironment(simulator)
+        if ProcessInfo.processInfo.environment["METIS_WATCH_FIXTURE"] == "1" { return }
+        #endif
         let online = session.isReachable
         let active = session.receivedApplicationContext["sessionActive"] as? Bool
         Task { @MainActor in
@@ -68,11 +77,17 @@ private final class PhoneConnection: NSObject, ObservableObject, WCSessionDelega
     }
 
     nonisolated func sessionReachabilityDidChange(_ session: WCSession) {
+        #if DEBUG && targetEnvironment(simulator)
+        if ProcessInfo.processInfo.environment["METIS_WATCH_FIXTURE"] == "1" { return }
+        #endif
         let online = session.isReachable
         Task { @MainActor in reachable = online }
     }
 
     nonisolated func session(_ session: WCSession, didReceiveApplicationContext applicationContext: [String: Any]) {
+        #if DEBUG && targetEnvironment(simulator)
+        if ProcessInfo.processInfo.environment["METIS_WATCH_FIXTURE"] == "1" { return }
+        #endif
         let active = applicationContext["sessionActive"] as? Bool
         Task { @MainActor in sessionAvailable = active; sessionRevision &+= 1 }
     }
@@ -102,8 +117,34 @@ private final class PhoneConnection: NSObject, ObservableObject, WCSessionDelega
         guard result["denied"] as? Bool == true else { throw RelayError.unavailable }
     }
 
-    func send(chat: WatchChat, text: String, messageID: String) async throws {
-        let result = try await call(["action": "prompt", "chatId": chat.id, "text": text, "messageId": messageID])
+    func configuration(chat: WatchChat) async throws -> WatchConfiguration {
+        var models: [MetisModel] = []
+        var offset = 0
+        var selected: String?
+        var selections: [ModelSelection] = []
+        repeat {
+            let result = try await call(["action": "configuration", "chatId": chat.id, "offset": String(offset)])
+            guard let data = result["configuration"] as? Data else { throw RelayError.unavailable }
+            let page = try JSONDecoder().decode(WatchConfiguration.self, from: data)
+            models.append(contentsOf: page.models)
+            selected = page.modelID
+            selections = page.selections
+            guard let next = page.nextOffset else { break }
+            guard next > offset, !Task.isCancelled else { throw RelayError.unavailable }
+            offset = next
+        } while true
+        return WatchConfiguration(models: models, modelID: selected, selections: selections, nextOffset: nil)
+    }
+
+    func transcript(chat: WatchChat) async throws -> WatchTranscript {
+        let result = try await call(["action": "transcript", "chatId": chat.id])
+        guard let data = result["transcript"] as? Data else { throw RelayError.unavailable }
+        return try JSONDecoder().decode(WatchTranscript.self, from: data)
+    }
+
+    func send(chat: WatchChat, text: String, messageID: String, modelID: String, selections: [ModelSelection]) async throws {
+        let result = try await call(["action": "prompt", "chatId": chat.id, "text": text, "messageId": messageID,
+                                     "modelId": modelID, "modelParams": try JSONEncoder().encode(selections)])
         guard result["jobId"] as? String != nil else { throw RelayError.unavailable }
     }
 
@@ -112,7 +153,12 @@ private final class PhoneConnection: NSObject, ObservableObject, WCSessionDelega
         guard result["opened"] as? Bool == true else { throw RelayError.unavailable }
     }
 
-    private func call(_ message: [String: String]) async throws -> [String: Any] {
+    private func call(_ message: [String: Any]) async throws -> [String: Any] {
+        #if DEBUG && targetEnvironment(simulator)
+        if ProcessInfo.processInfo.environment["METIS_WATCH_FIXTURE"] == "1" {
+            return try WatchPreviewFixture.reply(message)
+        }
+        #endif
         guard WCSession.default.isReachable, sessionAvailable != false else { throw RelayError.unavailable }
         let revision = sessionRevision
         let result: [String: Any] = try await withCheckedThrowingContinuation { continuation in
@@ -147,13 +193,14 @@ private struct WatchChats: View {
                         ForEach(pending) { chat in chatLink(chat) }
                     }
                 }
-                Section("Chats") {
+                Section("Recent chats") {
+                    if chats.isEmpty && notice == nil { Text("No chats yet. Create your first chat.").font(.footnote) }
                     ForEach(chats.filter { !$0.needsAttention }) { chat in chatLink(chat) }
-                    Button("New chat", systemImage: "square.and.pencil") { Task { await create() } }
+                    Button { Task { await create() } } label: { Label("New chat", systemImage: "square.and.pencil") }
                         .disabled(creating || !relay.reachable || relay.sessionAvailable == false)
                 }
                 if let lastSync { Text(lastSync, style: .time).font(.caption).foregroundStyle(.secondary) }
-                Button("Refresh", systemImage: "arrow.clockwise") { Task { await refresh() } }
+                Button { Task { await refresh() } } label: { Label("Refresh", systemImage: "arrow.clockwise") }
             }
             .navigationTitle("Metis")
         }
@@ -219,6 +266,13 @@ private struct WatchPrompt: View {
     @State private var notice: String?
     @State private var pending: WatchPending?
     @State private var confirmDeny = false
+    @State private var models: [MetisModel] = []
+    @State private var modelID = ""
+    @State private var selections: [ModelSelection] = []
+    @State private var transcript: WatchTranscript?
+    @State private var loading = true
+    @State private var refreshing = false
+    private var model: MetisModel? { models.first { $0.id == modelID } }
 
     var body: some View {
         List {
@@ -233,28 +287,113 @@ private struct WatchPrompt: View {
             if let question = pending?.question {
                 Section("Question") { Text(question) }
             }
+            if loading { ProgressView("Loading chat") }
+            if let transcript {
+                NavigationLink(destination: WatchConversation(transcript: transcript)) {
+                    Label("Conversation", systemImage: "text.bubble")
+                }
+                Text(transcript.status.replacingOccurrences(of: "_", with: " ")).font(.caption)
+            }
+            Section("Model") {
+                if models.isEmpty && !loading { Text("No models available. Check providers on iPhone.").font(.footnote) }
+                Picker("Model", selection: Binding(get: { modelID }, set: { value in
+                    modelID = value
+                    selections = model?.selections([]) ?? []
+                    messageID = UUID().uuidString
+                })) {
+                    Text("Select model").tag("")
+                    ForEach(models) { item in
+                        Text(item.connectionLabel.map { item.title + " · " + $0 } ?? item.title).tag(item.id)
+                    }
+                }
+                .disabled(busy || loading)
+                if let model {
+                    ForEach(model.parameters ?? []) { parameter in
+                        if !parameter.values.isEmpty {
+                            Picker(parameter.title, selection: parameterBinding(parameter)) {
+                                Text("Provider default").tag("")
+                                ForEach(parameter.values, id: \.value) { option in
+                                    Text(option.displayName ?? option.value).tag(option.value)
+                                }
+                            }.disabled(busy)
+                        }
+                        if parameter.customNumber != nil {
+                            TextField(parameter.title, text: parameterBinding(parameter))
+                                .disabled(busy)
+                            if let value = selections.first(where: { $0.id == parameter.id }),
+                               !parameter.accepts(value.value) {
+                                Text("Value outside the available model range.").font(.footnote)
+                            }
+                        }
+                    }
+                    if model.parameters?.isEmpty != false { Text("No model options available.").font(.footnote) }
+                }
+            }
             TextField("Prompt", text: $draft)
                 .onChange(of: draft) { _ in if !busy { messageID = UUID().uuidString } }
                 .disabled(busy)
-            Button("Send", systemImage: "arrow.up.circle") { confirmation = true }
-                .disabled(busy || !relay.reachable || pending?.approvalID != nil || pending?.question != nil ||
+            Button { confirmation = true } label: { Label("Send", systemImage: "arrow.up.circle") }
+                .disabled(busy || loading || model == nil || (model.map { (try? $0.validate(selections)) == nil } ?? true) || !relay.reachable || relay.sessionAvailable == false || pending?.approvalID != nil || pending?.question != nil ||
                           draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || draft.count > 2_000)
-            Button("Open on iPhone", systemImage: "iphone") {
+            Button {
                 Task {
                     do { try await relay.open(chat: chat); notice = "Open Metis on your iPhone." }
                     catch { notice = error.localizedDescription }
                 }
             }
+            label: { Label("Open on iPhone", systemImage: "iphone") }
             .disabled(!relay.reachable)
+            Button { Task { await refresh() } } label: { Label("Refresh chat", systemImage: "arrow.clockwise") }
+                .disabled(busy || refreshing || !relay.reachable)
         }
         .navigationTitle(chat.title)
-        .task { if chat.needsAttention { await loadPending() } }
+        .onChange(of: selections) { _ in if !busy { messageID = UUID().uuidString } }
+        .task {
+            await refresh()
+            while !Task.isCancelled {
+                do { try await Task.sleep(nanoseconds: 5_000_000_000) } catch { return }
+                if !busy && relay.reachable && relay.sessionAvailable != false { await refreshConversation() }
+            }
+        }
         .confirmationDialog("Send to \(chat.title)?", isPresented: $confirmation, titleVisibility: .visible) {
             Button("Send prompt") { Task { await send() } }
         }
         .confirmationDialog("Deny this request?", isPresented: $confirmDeny, titleVisibility: .visible) {
             Button("Deny approval", role: .destructive) { Task { await deny() } }
         }
+    }
+
+    private func parameterBinding(_ parameter: ModelParameter) -> Binding<String> {
+        Binding(get: { selections.first { $0.id == parameter.id }?.value ?? "" },
+                set: { value in
+                    selections.removeAll { $0.id == parameter.id }
+                    if !value.isEmpty { selections.append(ModelSelection(id: parameter.id, value: value)) }
+                })
+    }
+
+    private func refresh() async {
+        guard !refreshing else { return }
+        refreshing = true
+        defer { loading = false; refreshing = false }
+        do {
+            let configuration = try await relay.configuration(chat: chat)
+            models = configuration.models
+            if model == nil {
+                modelID = configuration.modelID ?? ""
+                // SwiftUI's model-change callback runs after this task.
+                selections = model?.selections(configuration.selections) ?? []
+            } else {
+                selections = model?.selections(selections) ?? []
+            }
+            await refreshConversation()
+        } catch { notice = error.localizedDescription }
+    }
+
+    private func refreshConversation() async {
+        do {
+            transcript = try await relay.transcript(chat: chat)
+            await loadPending()
+        } catch { if !Task.isCancelled { notice = error.localizedDescription } }
     }
 
     private func loadPending() async {
@@ -281,10 +420,29 @@ private struct WatchPrompt: View {
         busy = true
         defer { busy = false }
         do {
-            try await relay.send(chat: chat, text: draft, messageID: messageID)
+            guard let model else { throw ModelContractError.changed }
+            try model.validate(selections)
+            try await relay.send(chat: chat, text: draft, messageID: messageID, modelID: modelID, selections: selections)
             draft = ""
             messageID = UUID().uuidString
             notice = "Accepted by Metis."
+            await refreshConversation()
         } catch { notice = error.localizedDescription }
+    }
+}
+
+private struct WatchConversation: View {
+    let transcript: WatchTranscript
+    var body: some View {
+        List {
+            if transcript.messages.isEmpty { Text("No messages yet.") }
+            ForEach(transcript.messages) { message in
+                VStack(alignment: .leading, spacing: 4) {
+                    Text(message.role.capitalized).font(.caption).foregroundStyle(.secondary)
+                    Text(message.content).font(.body)
+                }
+            }
+        }
+        .navigationTitle("Conversation")
     }
 }

@@ -19,7 +19,7 @@ final class WatchRelay: NSObject, ObservableObject, WCSessionDelegate {
 
     private func publishSessionState() {
         guard WCSession.isSupported(), WCSession.default.activationState == .activated else { return }
-        try? WCSession.default.updateApplicationContext(["sessionActive": enabled && client != nil])
+        try? WCSession.default.updateApplicationContext(["sessionActive": enabled && client != nil, "revision": UUID().uuidString])
     }
 
     nonisolated func session(_ session: WCSession, activationDidCompleteWith activationState: WCSessionActivationState, error: Error?) {
@@ -37,6 +37,9 @@ final class WatchRelay: NSObject, ObservableObject, WCSessionDelegate {
         let messageID = message["messageId"] as? String
         let approvalID = message["approvalId"] as? String
         let version = message["version"] as? String
+        let offset = Int(message["offset"] as? String ?? "") ?? 0
+        let selectedModel = message["modelId"] as? String
+        let parameterData = message["modelParams"] as? Data
         Task { @MainActor in
             guard enabled, UIApplication.shared.isProtectedDataAvailable, let client else {
                 replyHandler(["error": "Unlock iPhone and enable Watch access in Metis."])
@@ -55,6 +58,37 @@ final class WatchRelay: NSObject, ObservableObject, WCSessionDelegate {
                     let chat = try await client.createChat()
                     guard self.client === client, enabled else { break }
                     replyHandler(["chat": chatSummary(chat)])
+                    return
+                case "configuration":
+                    guard let chatID else { break }
+                    let chat = try await client.chat(id: chatID)
+                    let models = try await client.models().sorted { $0.id < $1.id }
+                    guard offset >= 0, offset <= models.count else { break }
+                    let modelID = try? await client.modelForSend(chatModel: chat.chat.modelId)
+                    let selections = models.first(where: { $0.id == modelID })?.selections(chat.chat.modelParams ?? []) ?? []
+                    guard self.client === client, enabled, UIApplication.shared.isProtectedDataAvailable else { break }
+                    var page: [MetisModel] = []
+                    var next = offset
+                    while next < models.count {
+                        let candidate = page + [models[next]]
+                        let data = try JSONEncoder().encode(candidate)
+                        guard data.count < 48_000 else {
+                            if page.isEmpty { throw MetisError.unexpectedResponse }
+                            break
+                        }
+                        page = candidate
+                        next += 1
+                    }
+                    replyHandler(["configuration": try JSONEncoder().encode(WatchConfiguration(models: page, modelID: modelID, selections: selections, nextOffset: next < models.count ? next : nil))])
+                    return
+                case "transcript":
+                    guard let chatID else { break }
+                    let page = try await client.chat(id: chatID)
+                    let messages = page.chat.messages.suffix(12).map {
+                        WatchTranscript.Message(id: $0.id, role: $0.role, content: String($0.content.prefix(1000)))
+                    }
+                    guard self.client === client, enabled, UIApplication.shared.isProtectedDataAvailable else { break }
+                    replyHandler(["transcript": try JSONEncoder().encode(WatchTranscript(messages: messages, status: page.chat.runStatus ?? "idle"))])
                     return
                 case "pending":
                     guard let chatID else { break }
@@ -89,9 +123,14 @@ final class WatchRelay: NSObject, ObservableObject, WCSessionDelegate {
                           !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
                           text.count <= 2_000 else { break }
                     let chat = try await client.chat(id: chatID)
-                    let model = try await client.modelForSend(chatModel: chat.chat.modelId)
-                    guard self.client === client, enabled else { break }
-                    let run = try await client.send(chatID: chatID, message: text, messageID: messageID, modelID: model)
+                    let model = try await client.modelForSend(chatModel: selectedModel ?? chat.chat.modelId)
+                    let catalog = try await client.models()
+                    guard let contract = catalog.first(where: { $0.id == model }) else { throw MetisError.unavailableModel }
+                    let selections = try parameterData.map { try JSONDecoder().decode([ModelSelection].self, from: $0) }
+                        ?? contract.selections(chat.chat.modelParams ?? [])
+                    try contract.validate(selections)
+                    guard self.client === client, enabled, UIApplication.shared.isProtectedDataAvailable else { break }
+                    let run = try await client.send(chatID: chatID, message: text, messageID: messageID, modelID: model, modelParams: selections)
                     guard self.client === client, enabled else { break }
                     replyHandler(["jobId": run.id, "status": run.status])
                     return

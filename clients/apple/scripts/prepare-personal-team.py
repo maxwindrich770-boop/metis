@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Prepare an isolated iPhone-only Xcode project for Personal Team testing."""
+"""Prepare an isolated Personal Team iPhone project, optionally with its Watch companion."""
 
 import argparse
 import json
@@ -59,15 +59,28 @@ def referenced_objects(value, objects):
             yield from referenced_objects(item, objects)
 
 
-def prepare(project, objects, root, target_id, target, source_root, team, bundle_id):
-    root["targets"] = [target_id]
+def prepare(project, objects, root, target_id, target, source_root, team, bundle_id, include_watch=False):
+    kept = {target_id}
+    if include_watch:
+        kept.update(key for key in root["targets"]
+                    if objects[key].get("name") in {"MetisWatch", "MetisWatchExtension"})
+        if len(kept) != 3:
+            raise ValueError("Expected the watchOS 8 app and WatchKit extension targets.")
+    root["targets"] = [key for key in root["targets"] if key in kept]
     root["projectDirPath"] = str(source_root)
     root["projectRoot"] = ""
     main_group = objects[root["mainGroup"]]
     main_group["sourceTree"] = "<absolute>"
     main_group["path"] = str(source_root)
-    objects[root["productRefGroup"]]["children"] = [target["productReference"]]
-    target["dependencies"] = []
+    objects[root["productRefGroup"]]["children"] = [objects[key]["productReference"] for key in root["targets"]]
+    allowed_dependencies = {key for key, value in objects.items()
+                            if value.get("isa") == "PBXTargetDependency" and value.get("target") in kept}
+    allowed_copy_phases = {key for key, value in objects.items()
+                           if include_watch and value.get("isa") == "PBXCopyFilesBuildPhase"
+                           and value.get("name") in {"Embed Watch Content", "Embed Watch Extension"}}
+    for key in kept:
+        objects[key]["dependencies"] = [dep for dep in objects[key].get("dependencies", [])
+                                        if dep in allowed_dependencies]
     attributes = root.setdefault("attributes", {})
     attributes.pop("SystemCapabilities", None)
     own_attributes = attributes.get("TargetAttributes", {}).get(target_id, {})
@@ -76,10 +89,10 @@ def prepare(project, objects, root, target_id, target, source_root, team, bundle
     attributes["TargetAttributes"] = {target_id: own_attributes}
     removed = {
         key for key, value in objects.items()
-        if ((value.get("isa") == "PBXNativeTarget" and key != target_id)
-            or value.get("isa") in {
-                "PBXTargetDependency", "PBXContainerItemProxy", "PBXCopyFilesBuildPhase",
-            })
+        if ((value.get("isa") == "PBXNativeTarget" and key not in kept)
+            or (value.get("isa") == "PBXTargetDependency" and key not in allowed_dependencies)
+            or (value.get("isa") == "PBXContainerItemProxy" and value.get("remoteGlobalIDString") not in kept)
+            or (value.get("isa") == "PBXCopyFilesBuildPhase" and key not in allowed_copy_phases))
     }
     objects = {
         key: remove_references(value, removed)
@@ -122,6 +135,19 @@ def prepare(project, objects, root, target_id, target, source_root, team, bundle
             "METIS_PUSH_UNAVAILABLE_REASON": "personal-team",
             "INFOPLIST_FILE": str(source_root / "MetisiOS/Info.plist"),
         })
+    if include_watch:
+        for key in kept - {target_id}:
+            watch_target = objects[key]
+            extension = watch_target["name"] == "MetisWatchExtension"
+            for config_id in objects[watch_target["buildConfigurationList"]]["buildConfigurations"]:
+                settings = objects[config_id]["buildSettings"]
+                settings.update({
+                    "PRODUCT_BUNDLE_IDENTIFIER": bundle_id + ".watchkitapp" + (".watchkitextension" if extension else ""),
+                    "PRODUCT_NAME": watch_target["name"],
+                    "INFOPLIST_FILE": str(source_root / ("MetisWatch/ExtensionInfo.plist" if extension else "MetisWatch/Info.plist")),
+                    "INFOPLIST_KEY_CFBundleDisplayName": "Metis",
+                    "CODE_SIGN_IDENTITY[sdk=watchsimulator*]": "-",
+                })
     return project
 
 
@@ -172,6 +198,7 @@ def main():
         default=Path(__file__).resolve().parents[1] / "MetisApple.xcodeproj",
         help="Original Xcode project (default: clients/apple/MetisApple.xcodeproj)",
     )
+    parser.add_argument("--include-watch", action="store_true", help="Keep the watchOS 8 companion; Push and Share remain omitted")
     args = parser.parse_args()
     if (len(args.team) != 10 or not args.team.isascii()
             or not args.team.isalnum() or args.team != args.team.upper()):
@@ -199,7 +226,7 @@ def main():
     project, objects, root, target_id, target = load_project(source)
     product = objects[target["productReference"]]
     project = prepare(
-        project, objects, root, target_id, target, source_root, args.team, args.bundle_id,
+        project, objects, root, target_id, target, source_root, args.team, args.bundle_id, args.include_watch,
     )
     project_name = "MetisPersonalTeam.xcodeproj"
     scheme = make_scheme(target_id, target, product, output / project_name)
@@ -213,7 +240,7 @@ def main():
     print("Project:", generated)
     print("Scheme: Metis Test")
     print("Display name: Metis Test")
-    print("Personal Team variant: iPhone only; Push, Share and Watch companion unavailable.")
+    print("Personal Team variant: iPhone + watchOS 8 companion; Push and Share unavailable." if args.include_watch else "Personal Team variant: iPhone only; Push, Share and Watch companion unavailable.")
     print("Original project and HTTPS/session behavior unchanged. No build or provisioning performed.")
 
 
