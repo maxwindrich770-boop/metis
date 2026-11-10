@@ -18,6 +18,8 @@ function measure() {
   const heading = surface?.querySelector('p');
   const title = heading?.getBoundingClientRect();
   const value = {
+    visibleValues: usage ? Array.from(usage.querySelectorAll('span')).filter(node => node.textContent?.endsWith('% left') && getComputedStyle(node).display !== 'none').length : null,
+    windowGaps: usage ? Array.from(usage.querySelector(':scope > div')!.children).slice(1).map((node, index) => node.getBoundingClientRect().top - usage.querySelector(':scope > div')!.children[index].getBoundingClientRect().bottom) : [],
     width: innerWidth, height: innerHeight, usage: Boolean(usage),
     left: box?.left, right: box?.right, cardWidth: box?.width,
     titleCenter: title ? (title.left + title.right) / 2 : null,

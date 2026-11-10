@@ -44,7 +44,7 @@ final class MetisUITests: XCTestCase {
         XCTAssertTrue(app.navigationBars["iPhone settings"].waitForExistence(timeout: 10))
         let version = app.descendants(matching: .any)["metis.appVersion"].firstMatch
         XCTAssertTrue(version.waitForExistence(timeout: 5))
-        XCTAssertEqual(version.value as? String, "0.1.15 Developer Beta")
+        XCTAssertEqual(version.value as? String, "0.1.16 Developer Beta")
         capture(app, named: "build14-version-in-native-settings")
     }
 
@@ -1439,6 +1439,8 @@ final class MetisUITests: XCTestCase {
 
 
     private struct UsageLayout: Decodable {
+        let visibleValues: Int?
+        let windowGaps: [Double]
         let width: Double
         let usage: Bool
         let left: Double?
@@ -1466,6 +1468,9 @@ final class MetisUITests: XCTestCase {
         XCTAssertEqual(try XCTUnwrap(portrait.right), portrait.width - 8, accuracy: 2)
         XCTAssertEqual(try XCTUnwrap(portrait.titleCenter), portrait.width / 2, accuracy: 2)
         XCTAssertEqual(portrait.align, "center")
+        XCTAssertEqual(portrait.visibleValues, 2)
+        XCTAssertEqual(portrait.windowGaps.count, 2)
+        for gap in portrait.windowGaps { XCTAssertEqual(gap, 12, accuracy: 1) }
         capture(app, named: "usage-real-component-portrait-full-width")
 
         XCUIDevice.shared.orientation = .landscapeLeft
@@ -1473,6 +1478,8 @@ final class MetisUITests: XCTestCase {
         let landscape = try usageLayout(in: web, portrait: false, usage: true)
         XCTAssertEqual(try XCTUnwrap(landscape.cardWidth), 256, accuracy: 2)
         XCTAssertEqual(landscape.align, "start")
+        XCTAssertEqual(landscape.visibleValues, 2)
+        for gap in landscape.windowGaps { XCTAssertEqual(gap, 12, accuracy: 1) }
         capture(app, named: "usage-real-component-landscape-unchanged")
 
         XCUIDevice.shared.orientation = .portrait

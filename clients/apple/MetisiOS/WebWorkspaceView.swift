@@ -455,6 +455,14 @@ enum MetisAppWebPresentation {
             pointer-events: none;
           }
         }
+        /* Each quota window owns its value; omit the repeated header summary. */
+        html[data-metis-native-app="ios"] [data-metis-app-usage] > div > .items-start > span {
+          display: none;
+        }
+        /* Keep heading-to-window and window-to-window spacing equally readable. */
+        html[data-metis-native-app="ios"] [data-metis-app-usage] > div > :not(:first-child) {
+          margin-block-start: 12px;
+        }
         /* Preserve Radix's 8-point collision gutter; landscape stays compact. */
         @media (orientation: portrait) and (max-width: 767px) {
           html[data-metis-native-app="ios"] [data-metis-app-usage] {

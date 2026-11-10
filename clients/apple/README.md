@@ -1,5 +1,9 @@
 # Metis for iPhone
 
+Developer Beta 0.1.16 removes the repeated quota summary from the native iPhone
+usage popover. Each discovered quota window retains its own value, with 12-point
+spacing below the heading and between windows in portrait and landscape.
+
 Open `MetisApple.xcodeproj`, select the shared **Metis** scheme and choose an
 iPhone running iOS 17 or later. The scheme embeds the Share Extension and the
 watchOS 8+ companion. For signed builds, follow the
