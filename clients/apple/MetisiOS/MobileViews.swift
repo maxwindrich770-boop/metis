@@ -435,6 +435,8 @@ struct ConnectionSettingsView: View {
     var title: LocalizedStringKey = "Settings"
     var close: (() -> Void)? = nil
     @Environment(\.openURL) private var openURL
+    @Environment(\.scenePhase) private var scenePhase
+    @State private var serverAddressVisible = false
     @State private var account: String?
     @State private var devices: [MetisRegisteredDevice] = []
     @State private var error: String?
@@ -447,7 +449,27 @@ struct ConnectionSettingsView: View {
         NavigationStack {
             Form {
                 Section("Connection") {
-                    LabeledContent("Server", value: client.origin)
+                    LabeledContent("Server") {
+                        HStack(spacing: 4) {
+                            Text(verbatim: serverAddressVisible ? client.origin : "••••••••••••")
+                                .blur(radius: serverAddressVisible ? 0 : 4)
+                                .privacySensitive()
+                                .accessibilityElement(children: .ignore)
+                                .accessibilityLabel(Text("Server address"))
+                                .accessibilityValue(serverAddressVisible ? Text(verbatim: client.origin) : Text("Hidden"))
+                                .accessibilityIdentifier("metis.serverAddress")
+                            Button {
+                                serverAddressVisible.toggle()
+                            } label: {
+                                Image(systemName: serverAddressVisible ? "eye.slash" : "eye")
+                                    .frame(minWidth: 44, minHeight: 44)
+                                    .contentShape(Rectangle())
+                            }
+                            .buttonStyle(.borderless)
+                            .accessibilityLabel(serverAddressVisible ? Text("Hide server address") : Text("Show server address"))
+                            .accessibilityIdentifier("metis.serverAddressVisibility")
+                        }
+                    }
                     if let account {
                         LabeledContent("Account", value: account)
                             .accessibilityElement(children: .ignore)
@@ -509,6 +531,11 @@ struct ConnectionSettingsView: View {
             }
             .task { await load() }
             .refreshable { await load() }
+            .onChange(of: scenePhase) { _, phase in
+                if phase != .active { serverAddressVisible = false }
+            }
+            .onChange(of: client.origin) { _, _ in serverAddressVisible = false }
+            .onDisappear { serverAddressVisible = false }
         }
     }
 

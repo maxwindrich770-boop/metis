@@ -44,7 +44,7 @@ final class MetisUITests: XCTestCase {
         XCTAssertTrue(app.navigationBars["iPhone settings"].waitForExistence(timeout: 10))
         let version = app.descendants(matching: .any)["metis.appVersion"].firstMatch
         XCTAssertTrue(version.waitForExistence(timeout: 5))
-        XCTAssertEqual(version.value as? String, "0.1.17 Developer Beta")
+        XCTAssertEqual(version.value as? String, "0.1.18 Developer Beta")
         capture(app, named: "build14-version-in-native-settings")
     }
 
@@ -66,6 +66,89 @@ final class MetisUITests: XCTestCase {
         XCTAssertGreaterThanOrEqual(try XCTUnwrap(value.minTop), value.safeTop + 8)
         XCTAssertGreaterThanOrEqual(try XCTUnwrap(value.minLeft), value.safeLeft)
         XCTAssertLessThanOrEqual(try XCTUnwrap(value.maxRight), value.width - value.safeRight)
+    }
+
+    @MainActor
+    func testServerAddressRequiresRevealAndHidesWhenLeavingSettings() {
+        let app = launch(additionalArguments: [
+            "-metis.app-lock-fixture", "unavailable", "-metis.app-lock-reset"
+        ])
+        signIn(app, server: "http://localhost:43100")
+        _ = authenticatedWebWorkspace(in: app)
+        func openSettings() {
+            let controls = app.buttons["metis.appControlsFallback"]
+            XCTAssertTrue(controls.waitForExistence(timeout: 5))
+            controls.tap()
+            let settings = app.buttons["metis.iPhoneSettings"]
+            revealInControls(settings, in: app)
+            settings.tap()
+            XCTAssertTrue(app.navigationBars["iPhone settings"].waitForExistence(timeout: 5))
+        }
+        openSettings()
+        let address = app.descendants(matching: .any)["metis.serverAddress"].firstMatch
+        let visibility = app.buttons["metis.serverAddressVisibility"]
+        XCTAssertTrue(address.waitForExistence(timeout: 5))
+        XCTAssertEqual(address.value as? String, "Hidden")
+        XCTAssertFalse(app.staticTexts["http://localhost:43100"].exists)
+        capture(app, named: "beta18-server-address-hidden")
+        visibility.tap()
+        XCTAssertEqual(address.value as? String, "http://localhost:43100")
+        XCTAssertTrue(visibility.label.contains("Hide server address"))
+        capture(app, named: "beta18-server-address-revealed-synthetic-origin")
+        XCUIDevice.shared.press(.home)
+        app.activate()
+        XCTAssertEqual(address.value as? String, "Hidden")
+        visibility.tap()
+        app.buttons["metis.iPhoneSettingsDone"].tap()
+        openSettings()
+        XCTAssertEqual(address.value as? String, "Hidden")
+        capture(app, named: "beta18-server-address-hidden-after-reopening")
+    }
+
+    @MainActor
+    func testServerUpdateKeepsTheSharedMaintenanceScreenAcrossRestart() {
+        let app = launch()
+        signIn(app, server: "http://localhost:43100")
+        let web = authenticatedWebWorkspace(in: app)
+        let fixture = web.links["Open server update fixture"]
+        reveal(fixture, in: app)
+        fixture.tap()
+        let update = web.buttons["Update now"]
+        XCTAssertTrue(update.waitForExistence(timeout: 10), app.debugDescription)
+        update.tap()
+        XCTAssertTrue(web.staticTexts["Metis is being updated"].waitForExistence(timeout: 5))
+        XCTAssertTrue(web.staticTexts["Update log"].exists)
+        capture(app, named: "beta18-shared-update-screen-synthetic-restart")
+        XCTAssertFalse(app.otherElements["metis.workspaceError"].exists)
+        XCTAssertTrue(web.staticTexts["Update verified — workspace restored"].waitForExistence(timeout: 20), app.debugDescription)
+        XCTAssertFalse(app.otherElements["metis.workspaceError"].exists)
+        capture(app, named: "beta18-update-reconnected-synthetic-restart")
+    }
+
+    @MainActor
+    func testProjectNotesKeepTheirSelectionAndLeaveTheProjectRoute() {
+        let app = launch()
+        signIn(app, server: "http://localhost:43100")
+        let web = authenticatedWebWorkspace(in: app)
+        let fixture = web.links["Open project note navigation fixture"]
+        reveal(fixture, in: app)
+        fixture.tap()
+        let first = web.buttons["First project note"]
+        XCTAssertTrue(first.waitForExistence(timeout: 10), app.debugDescription)
+        first.tap()
+        XCTAssertTrue(web.staticTexts["Opened note: first"].waitForExistence(timeout: 5), app.debugDescription)
+        XCTAssertTrue(web.staticTexts["Route: notes"].exists)
+        capture(app, named: "beta18-project-note-opened-synthetic-fixture")
+        web.buttons["Back to project"].tap()
+        let second = web.buttons["Second project note"]
+        XCTAssertTrue(second.waitForExistence(timeout: 5))
+        second.tap()
+        XCTAssertTrue(web.staticTexts["Opened note: second"].waitForExistence(timeout: 5))
+        web.buttons["Back to project"].tap()
+        web.buttons["Open empty project"].tap()
+        web.buttons["Open notes"].tap()
+        XCTAssertTrue(web.staticTexts["Opened notebook"].waitForExistence(timeout: 5))
+        XCTAssertTrue(web.staticTexts["Route: notes"].exists)
     }
 
     @MainActor

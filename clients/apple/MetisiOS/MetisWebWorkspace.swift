@@ -154,6 +154,8 @@ final class MetisWebWorkspace: NSObject, ObservableObject {
     private var pendingChatURL: URL?
     private var cookieTask: Task<Void, Never>?
     private var authorizationTask: Task<Void, Never>?
+    private var updateRecoveryTask: Task<Void, Never>?
+    private var installerUpdatePending = false
     private var startTask: Task<Void, Never>?
     private var generation = 0
     private var cookieRead = 0
@@ -346,6 +348,12 @@ final class MetisWebWorkspace: NSObject, ObservableObject {
               let frameURL = message.frameInfo.request.url,
               MetisWebPolicy.isSameOrigin(frameURL, server: server) else { return }
         switch action {
+        case "update-active":
+            installerUpdatePending = true
+        case "update-inactive":
+            installerUpdatePending = false
+            updateRecoveryTask?.cancel()
+            updateRecoveryTask = nil
         case "controls-available":
             appControlsAvailable = true
         case "controls-unavailable":
@@ -443,6 +451,9 @@ final class MetisWebWorkspace: NSObject, ObservableObject {
         startTask?.cancel()
         cookieTask?.cancel()
         authorizationTask?.cancel()
+        updateRecoveryTask?.cancel()
+        updateRecoveryTask = nil
+        installerUpdatePending = false
         cookieObserver.owner = nil
         appControlsBridge.owner = nil
         appControlsAvailable = false
@@ -618,7 +629,24 @@ final class MetisWebWorkspace: NSObject, ObservableObject {
     private func navigationFailed(_ error: Error) {
         guard !invalidated, (error as NSError).code != NSURLErrorCancelled else { return }
         isLoading = false
+        if installerUpdatePending {
+            scheduleUpdateRecovery()
+            return
+        }
         errorMessage = String(localized: "The Metis workspace could not load. Check your connection and try again.")
+    }
+
+    private func scheduleUpdateRecovery() {
+        guard !invalidated, installerUpdatePending, updateRecoveryTask == nil else { return }
+        // Keep the server's existing maintenance document visible during restart.
+        // The shared web UI still owns update status, logs and completion.
+        errorMessage = nil
+        updateRecoveryTask = Task { [weak self] in
+            do { try await Task.sleep(for: .seconds(2)) } catch { return }
+            guard let self, !self.invalidated, self.installerUpdatePending, !Task.isCancelled else { return }
+            self.updateRecoveryTask = nil
+            if let url = self.lastMainURL ?? self.server { self.load(url) }
+        }
     }
 
     private func presentDialog(_ dialog: UIAlertController, cancel: @escaping () -> Void) -> Bool {
@@ -688,7 +716,11 @@ extension MetisWebWorkspace: WKNavigationDelegate {
                 decisionHandler(.cancel)
                 lastMainURL = url
                 isLoading = false
-                errorMessage = String(localized: "The Metis workspace could not load. Check your connection and try again.")
+                if installerUpdatePending && (500...599).contains(http.statusCode) {
+                    scheduleUpdateRecovery()
+                } else {
+                    errorMessage = String(localized: "The Metis workspace could not load. Check your connection and try again.")
+                }
                 return
             }
         }

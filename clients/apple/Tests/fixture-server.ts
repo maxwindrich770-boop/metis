@@ -48,6 +48,8 @@ function webWorkspaceFixture(username: string, cookieName: string, externalAddre
     <a href="/?fixture=sidebar">Open synthetic sidebar fixture</a>
     <a href="/?fixture=toasts">Open notification safe-area fixture</a>
     <a href="/?fixture=usage">Open usage layout fixture</a>
+    <a href="/?fixture=project-notes">Open project note navigation fixture</a>
+    <a href="/?fixture=update">Open server update fixture</a>
     <a href="/?fixture=model-preferences">Open synthetic model preference storage fixture</a>
     <p id="error" role="alert"></p>
   </main>
@@ -163,6 +165,45 @@ async function webUsageFixture() {
     <title>Synthetic usage layout fixture</title><style>${bundle.css}</style></head>
     <body><div id="usage-root"></div><output id="usage-metrics">Usage geometry: pending</output>
     <script>${bundle.script.replaceAll("</script", "<\\/script")}</script></body></html>`;
+}
+
+let updateFixtureBundle: Promise<string> | undefined;
+async function webUpdateFixture() {
+  const require = createRequire(import.meta.url);
+  const { build } = createRequire(require.resolve("tsx"))("esbuild");
+  const bundle: Promise<string> = updateFixtureBundle ??= build({
+    entryPoints: [path.resolve("clients/apple/Tests/update-fixture.tsx")],
+    bundle: true, write: false, minify: true, platform: "browser", format: "iife",
+    jsx: "automatic", define: { "process.env.NODE_ENV": '"production"', "process.env": "{}" },
+  }).then((result: { outputFiles: { text: string }[] }) => result.outputFiles[0].text);
+  const script = (await bundle).replaceAll("</script", "<\\/script");
+  return `<!doctype html><html lang="en"><head><meta charset="utf-8">
+    <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+    <title>Shared maintenance component integration fixture</title>
+    <style>body{font:17px system-ui;margin:24px;background:#161616;color:#f5f5f5}
+    main{min-height:80vh;display:flex;flex-direction:column;justify-content:center}
+    main img{display:none}section{max-width:36rem}button{min-height:44px}h1{font-size:22px}
+    pre{white-space:pre-wrap;font-size:12px}svg{width:32px;height:32px}</style></head>
+    <body><div id="update-root"></div><script>${script}</script></body></html>`;
+}
+
+let projectNotesFixtureBundle: Promise<string> | undefined;
+async function webProjectNotesFixture() {
+  const require = createRequire(import.meta.url);
+  const { build } = createRequire(require.resolve("tsx"))("esbuild");
+  const bundle: Promise<string> = projectNotesFixtureBundle ??= build({
+    entryPoints: [path.resolve("clients/apple/Tests/project-notes-fixture.tsx")],
+    bundle: true, write: false, minify: true, platform: "browser", format: "iife",
+    jsx: "automatic", define: { "process.env.NODE_ENV": '"production"' },
+  }).then((result: { outputFiles: { text: string }[] }) => result.outputFiles[0].text);
+  const script = (await bundle).replaceAll("</script", "<\\/script");
+  return `<!doctype html><html lang="en"><head><meta charset="utf-8">
+    <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+    <title>Synthetic project note navigation fixture</title>
+    <style>body{font:17px system-ui;margin:16px}button{display:block;min-height:44px;margin:12px 0}
+      .project-home-scroll header,.project-home-scroll section:not([data-slot="project-home-notes"]){display:none}
+      ul{list-style:none;padding:0}output{display:block}</style></head>
+    <body><div id="project-notes-root"></div><script>${script}</script></body></html>`;
 }
 
 function webSidebarFixture(username: string) {
@@ -931,6 +972,7 @@ async function main() {
   const droppedReplies = new Set<string>();
   let delayedHistory: { chatId: string; jobId: string } | undefined;
   let offline = false;
+  let updateRestartAttempts = 0;
   let mobileProfileUnavailable = false;
   let fallbackProfileReads = 0;
   let unknownCapabilitiesVersion = false;
@@ -1023,11 +1065,23 @@ async function main() {
       if (url.pathname === "/" && method === "GET") {
         const account = getAuthenticatedCookieUser(request);
         const externalAddress = url.origin.replace("localhost", "127.0.0.1") + "/fixture-external";
-        const fixture = url.searchParams.get("fixture");
+        let fixture = url.searchParams.get("fixture");
+        if (account && fixture === "update") updateRestartAttempts = 0;
+        if (account && fixture === "update-restart") {
+          updateRestartAttempts += 1;
+          if (updateRestartAttempts <= 3) {
+            outgoing.writeHead(503, { "content-type": "text/html", "cache-control": "no-store" });
+            outgoing.end("<html><body>Temporary restart response</body></html>");
+            return;
+          }
+          fixture = "update-restored";
+        }
         const html = account && (fixture === "viewport" || fixture === "composer-zoom" || fixture === "viewport-empty" || fixture === "viewport-empty-flow" || fixture === "viewport-tall" || fixture === "viewport-empty-large"
           ? webViewportFixture(account.username, fixture === "composer-zoom", fixture === "viewport-empty", fixture === "viewport-empty-flow" || fixture === "viewport-empty-large", fixture === "viewport-tall", fixture === "viewport-empty-large")
           : fixture === "toasts" ? await webToastFixture()
           : fixture === "usage" ? await webUsageFixture()
+          : fixture === "project-notes" ? await webProjectNotesFixture()
+          : fixture === "update" || fixture === "update-restored" ? await webUpdateFixture()
           : fixture === "sidebar" ? webSidebarFixture(account.username)
           : fixture === "model-preferences" ? webModelPreferenceFixture()
           : fixture === "app-controls-subframe" ? webAppControlsSubframeFixture()

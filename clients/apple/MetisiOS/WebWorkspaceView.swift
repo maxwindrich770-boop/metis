@@ -663,6 +663,21 @@ enum MetisAppWebPresentation {
       window.visualViewport?.addEventListener('resize', updateComposerLayout);
       document.addEventListener('metis-native-layout', updateComposerLayout);
 
+      let lastUpdatePending = null;
+      const announceUpdate = () => {
+        let pending = Boolean(document.querySelector('[data-metis-installer-maintenance]'));
+        try { pending ||= Boolean(localStorage.getItem('metis-update-job')); } catch {}
+        if (pending === lastUpdatePending) return;
+        lastUpdatePending = pending;
+        window.webkit?.messageHandlers?.metisAppControls?.postMessage(pending ? 'update-active' : 'update-inactive');
+      };
+      window.addEventListener('metis:installer-maintenance', () => {
+        lastUpdatePending = true;
+        window.webkit?.messageHandlers?.metisAppControls?.postMessage('update-active');
+      });
+      new MutationObserver(announceUpdate).observe(document.documentElement, { childList: true, subtree: true });
+      announceUpdate();
+
       let lastAvailability = null;
       const announceAvailability = available => {
         if (lastAvailability === available) return;
@@ -777,6 +792,21 @@ enum MetisAppWebPresentation {
         updateComposerLayout();
         announceAvailability(Boolean(document.querySelector('[data-metis-app-controls]')));
       };
+
+      // Project note buttons select a note without updating older servers' route.
+      // Keep that selection while leaving the project route before React handles
+      // the click; otherwise its route effect immediately restores the project.
+      document.addEventListener('click', event => {
+        if (!event.isTrusted || event.defaultPrevented || !(event.target instanceof Element)) return;
+        const button = event.target.closest('[data-slot="project-home-notes"] button');
+        if (!button || button.matches(':disabled, [aria-disabled="true"]')) return;
+        const destination = new URL(window.location.href);
+        if (destination.searchParams.get('c') === 'notes') return;
+        destination.searchParams.set('c', 'notes');
+        destination.searchParams.delete('view');
+        history.pushState(history.state, '', destination);
+        window.dispatchEvent(new PopStateEvent('popstate', { state: history.state }));
+      }, true);
 
       const mobileSidebarClose = sidebar => {
         if (!sidebar?.isConnected || !matchMedia('(max-width: 767px)').matches) return null;

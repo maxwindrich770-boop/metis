@@ -1,8 +1,14 @@
 # Metis for iPhone
 
-Developer Beta 0.1.16 removes the repeated quota summary from the native iPhone
-usage popover. Each discovered quota window retains its own value, with 12-point
-spacing below the heading and between windows in portrait and landscape.
+Developer Beta 0.1.18 conceals the server address in iPhone settings until an
+explicit reveal, hides it again on backgrounding or leaving settings, and keeps
+project notes selected when opening them from a project. Server updates use the
+same Settings and maintenance screen as the Web UI; the native workspace keeps
+that screen visible across temporary restart failures and reconnects automatically.
+The server still needs an operator-configured update execution path.
+
+The native iPhone usage popover shows each discovered quota window once, with
+12-point spacing below the heading and between windows in portrait and landscape.
 
 Open `MetisApple.xcodeproj`, select the shared **Metis** scheme and choose an
 iPhone running iOS 17 or later. The scheme embeds the Share Extension and the
