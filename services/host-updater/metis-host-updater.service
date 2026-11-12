@@ -1,0 +1,29 @@
+[Unit]
+Description=Metis fixed-operation host updater
+After=local-fs.target
+
+[Service]
+Type=simple
+User=root
+Group=root
+ExecStart=/usr/bin/python3 /usr/local/libexec/metis-host-updater/server.py --config /etc/metis-host-updater.json
+RuntimeDirectory=metis-host-updater
+RuntimeDirectoryMode=0711
+StateDirectory=metis-host-updater
+StateDirectoryMode=0700
+UMask=0077
+NoNewPrivileges=yes
+PrivateTmp=yes
+RestrictAddressFamilies=AF_UNIX
+ProtectSystem=strict
+ReadWritePaths=/run/metis-host-updater /var/lib/metis-host-updater
+# Add the configured data directory as a writable path in an operator drop-in.
+ProtectHome=read-only
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectControlGroups=yes
+Restart=on-failure
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target

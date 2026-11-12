@@ -6,7 +6,7 @@ import { HandsStage } from "@/components/hands-stage";
 export function MaintenanceScreen({ reason, logs = [] }: { reason?: string; logs?: string[] }) {
   return (
     <HandsStage contentClassName="space-y-6 text-center" role="status" aria-live="polite">
-        <div className="mx-auto flex size-12 items-center justify-center rounded-full border border-border bg-muted/30">
+        <div data-metis-installer-maintenance="" className="mx-auto flex size-12 items-center justify-center rounded-full border border-border bg-muted/30">
           <RefreshCw className="size-5 animate-spin text-muted-foreground" aria-hidden="true" />
         </div>
         <div className="space-y-2">

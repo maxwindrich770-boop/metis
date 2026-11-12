@@ -1,0 +1,13 @@
+{
+  "serviceName": "metis-ai",
+  "allowedUser": "metis-runtime",
+  "socketPath": "/run/metis-host-updater/update.sock",
+  "stateDir": "/var/lib/metis-host-updater",
+  "dataDir": "/var/lib/metis-ai",
+  "command": ["/usr/local/libexec/metis-approved-update"],
+  "environment": {
+    "HOME": "/root",
+    "USER": "root",
+    "PATH": "/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
+  }
+}

@@ -4,6 +4,7 @@ import { createInstallerLogCursor, readBoundedInstallerLog, streamInstallerLog, 
 import os from "node:os";
 import path from "node:path";
 import { promisify } from "node:util";
+import { callHostUpdater } from "./installer-update-host";
 
 const execFileAsync = promisify(execFile);
 
@@ -20,6 +21,7 @@ export type InstallerUpdateInput = {
   serviceName: string;
   dataDir: string;
   platform?: NodeJS.Platform;
+  jobId?: string;
 };
 
 export type InstallerUpdatePlan = {
@@ -177,6 +179,7 @@ export function readInstallerUpdateLog(dataDir: string, limit = 80, jobId?: stri
 
 export async function installerUpdateIsRunning(serviceName: string, platform: NodeJS.Platform = process.platform) {
   if (platform !== "linux") return false;
+  if (process.env.METIS_UPDATE_SOCKET) return (await callHostUpdater({ action: "status" })).running;
   const unit = installerUpdateUnitName(serviceName);
   try {
     const { stdout } = await execFileAsync("systemctl", ["show", "-p", "ActiveState", "--value", unit], {
@@ -227,16 +230,24 @@ async function runSystemdInstaller(plan: InstallerUpdatePlan, args: string[], ro
   const offset = createInstallerLogCursor();
   // Start forwarding at this job, rather than replaying every previous installer run.
   await streamInstallerLog(plan.logFile, offset, () => undefined).catch(() => undefined);
-  await execFileAsync("systemd-run", [
-    `--unit=${unit}`,
-    "--no-block",
-    "--description=Metis AI installer update",
-    `--property=StandardOutput=append:${plan.logFile}`,
-    `--property=StandardError=append:${plan.logFile}`,
-    "--property=PrivateTmp=no",
-    ...installerSystemdEnvironment(process.env, root),
-    ...installerExitCommand(plan, args),
-  ], { timeout: 30_000, maxBuffer: 1024 * 1024 });
+  try {
+    await execFileAsync("systemd-run", [
+      `--unit=${unit}`,
+      "--no-block",
+      "--description=Metis AI installer update",
+      `--property=StandardOutput=append:${plan.logFile}`,
+      `--property=StandardError=append:${plan.logFile}`,
+      "--property=PrivateTmp=no",
+      ...installerSystemdEnvironment(process.env, root),
+      ...installerExitCommand(plan, args),
+    ], { timeout: 30_000, maxBuffer: 1024 * 1024 });
+  } catch (error) {
+    const detail = error instanceof Error ? error.message : String(error);
+    if (/Failed to connect to bus|Operation not permitted|Access denied|Interactive authentication required/i.test(detail)) {
+      throw new Error("The app is not permitted to start host updates directly. An operator must configure the host updater (METIS_UPDATE_SOCKET); see docs/HOST-UPDATER.md.");
+    }
+    throw error;
+  }
 
   const deadline = Date.now() + 50 * 60_000;
   while (Date.now() < deadline) {
@@ -331,11 +342,37 @@ export async function runSpawnedInstaller(plan: InstallerUpdatePlan, args: strin
   }
 }
 
+async function runHostInstaller(input: InstallerUpdateInput, plan: InstallerUpdatePlan, log: (message: string) => void) {
+  const ref = input.channel === "releases" ? input.tag : input.commit;
+  if (!input.jobId || !ref) throw new Error("Host updates require a durable job and a verified target version.");
+  const cursor = createInstallerLogCursor();
+  await streamInstallerLog(plan.logFile, cursor, () => undefined).catch(() => undefined);
+  log("Starting the host updater outside the app sandbox.");
+  let status = await callHostUpdater({ action: "start", jobId: input.jobId, channel: input.channel, ref });
+  const deadline = Date.now() + 50 * 60_000;
+  while (Date.now() < deadline) {
+    await flushNewLogLines(plan.logFile, cursor, log);
+    if (!status.running) {
+      if (status.exitCode !== 0) throw new Error(`Host installer update exited with status ${status.exitCode ?? "unknown"}. Check the update log.`);
+      log("Installer finished; waiting for the restarted app.");
+      return;
+    }
+    await new Promise(resolve => setTimeout(resolve, 1_000));
+    try { status = await callHostUpdater({ action: "status", jobId: input.jobId }); }
+    catch { log("Waiting for the host updater to reconnect."); }
+  }
+  throw new Error("Host installer update timed out after 50 minutes.");
+}
+
 export async function runInstallerUpdate(
   input: InstallerUpdateInput,
   log: (message: string) => void,
 ): Promise<InstallerUpdateResult> {
   const plan = buildInstallerUpdatePlan(input);
+  if (plan.platform === "linux" && process.env.METIS_UPDATE_SOCKET) {
+    await runHostInstaller(input, plan, log);
+    return { tag: input.tag || "master", commit: input.commit, method: "installer", asset: path.basename(plan.scriptSource) };
+  }
   await mkdir(input.dataDir, { recursive: true });
   const script = await copyScriptForUpdate(plan.scriptSource, input.dataDir);
   const args = plan.args.map((value) => (value === plan.scriptSource ? script : value));

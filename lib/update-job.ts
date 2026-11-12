@@ -17,6 +17,7 @@ import {
 import { historyEntryFromJob, upsertUpdateHistoryEntry, type UpdateJobRange } from "@/lib/update-history";
 import { clearMaintenanceState, setMaintenanceState } from "@/lib/maintenance-state";
 import { boundInstallerLogLines, readBoundedUpdateJson } from "./installer-update-log";
+import { callHostUpdater } from "./installer-update-host";
 
 type UpdateJobResult = {
   tag: string;
@@ -143,12 +144,17 @@ export function settleUpdateJobFromInstaller(
 
 async function applyInstallerState(job: UpdateJob) {
   if (job.status !== "preparing") return job;
-  const [running, logs] = await Promise.all([
-    installerUpdateIsRunning(config.serviceName),
-    readInstallerUpdateLog(config.dataDir, 200, job.jobId),
-  ]);
+  const state = process.platform === "linux" && process.env.METIS_UPDATE_SOCKET
+    ? await callHostUpdater({ action: "status", jobId: job.jobId })
+    : { running: await installerUpdateIsRunning(config.serviceName), exitCode: undefined };
+  // A terminal host snapshot is written after its log. Read the log afterwards,
+  // otherwise an earlier log read can turn a concurrent success into failure.
+  const logs = await readInstallerUpdateLog(config.dataDir, 200, job.jobId);
+  // The host runner may have been killed before it could write its exit marker.
+  // Its durable, job-bound state must still settle the app's persisted job.
+  if (state.exitCode !== undefined) logs.push(`[metis-update-exit:${state.exitCode}]`);
   const next = settleUpdateJobFromInstaller(job, {
-    installerRunning: running,
+    installerRunning: state.running,
     logText: logs.join("\n"),
     currentPid: process.pid,
   });
@@ -163,7 +169,7 @@ async function applyInstallerState(job: UpdateJob) {
 }
 
 async function startUpdateJob(
-  prepare: (logger: (message: string) => void) => Promise<UpdateJobResult>,
+  prepare: (logger: (message: string) => void, job: UpdateJob) => Promise<UpdateJobResult>,
   reason = INSTALLER_REASON,
   initialize?: (job: UpdateJob) => Promise<void>,
 ) {
@@ -188,7 +194,7 @@ async function startUpdateJob(
     throw error;
   }
 
-  void prepare(log).then(async (result) => {
+  void prepare(log, job).then(async (result) => {
     job.result = result;
     log("Installer process finished; waiting for the restarted Metis process.");
     jobs.set(job.jobId, job);
@@ -244,8 +250,8 @@ async function startExclusiveInstallerUpdate(input: InstallerUpdateInput, range?
     toTag: input.tag,
     toCommit: input.commit,
   };
-  return startUpdateJob(async (log) => {
-    const result = await runInstallerUpdate(input, log);
+  return startUpdateJob(async (log, job) => {
+    const result = await runInstallerUpdate({ ...input, jobId: job.jobId }, log);
     return { ...result, commit: input.commit };
   }, INSTALLER_REASON, async (job) => {
     Object.assign(job, labels);
