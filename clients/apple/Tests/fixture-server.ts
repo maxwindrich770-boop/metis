@@ -864,7 +864,10 @@ function webViewportFixture(username: string, contentEditableComposer = false, c
       retainedFocusRequested = true;
       retainedFocusVerified = false;
       draft.readOnly = true;
-      draft.focus({ preventScroll: true });
+      // Updating readOnly on the current responder does not make UIKit reload
+      // its input traits. Release that responder, then restore DOM focus below
+      // once the keyboard has closed. The test still verifies final retained focus.
+      draft.blur();
       scheduleMetrics();
       setTimeout(() => {
         draft.focus({ preventScroll: true });
