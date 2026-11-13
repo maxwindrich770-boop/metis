@@ -30,7 +30,7 @@
 			buildConfigurationList = A00100000000000000000009;
 			compatibilityVersion = "Xcode 14.0";
 			developmentRegion = en;
-			knownRegions = (en, de, Base);
+			knownRegions = (en, Base);
 			mainGroup = A00100000000000000000002;
 			productRefGroup = A00100000000000000000004;
 			projectDirPath = "";

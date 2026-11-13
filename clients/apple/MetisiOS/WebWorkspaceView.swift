@@ -87,7 +87,7 @@ struct WebWorkspaceView: View {
                 showConnectionSettings()
             }
         }) {
-            WorkspaceAppControls(workspace: workspace, origin: origin) {
+            WorkspaceAppControls(workspace: workspace) {
                 openConnectionSettingsAfterDismiss = true
                 workspace.appControlsRequested = false
             }
@@ -195,7 +195,6 @@ struct WebWorkspaceView: View {
 @MainActor
 private struct WorkspaceAppControls: View {
     @ObservedObject var workspace: MetisWebWorkspace
-    let origin: String
     let showConnectionSettings: () -> Void
 
     @Environment(\.dismiss) private var dismiss
@@ -219,16 +218,9 @@ private struct WorkspaceAppControls: View {
                     .accessibilityIdentifier("metis.appControlsClose")
                 }
 
-                VStack(alignment: .leading, spacing: 6) {
-                    Text("iPhone controls")
-                        .font(.title2.weight(.semibold))
-                        .accessibilityAddTraits(.isHeader)
-                    Text(verbatim: URL(string: origin)?.host ?? origin)
-                        .font(.footnote)
-                        .foregroundStyle(MetisTheme.muted)
-                        .fixedSize(horizontal: false, vertical: true)
-                        .textSelection(.enabled)
-                }
+                Text("iPhone controls")
+                    .font(.title2.weight(.semibold))
+                    .accessibilityAddTraits(.isHeader)
 
                 Button(action: showConnectionSettings) {
                     HStack(spacing: 12) {

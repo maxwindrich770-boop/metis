@@ -70,15 +70,26 @@ final class MetisUITests: XCTestCase {
 
     @MainActor
     func testServerAddressRequiresRevealAndHidesWhenLeavingSettings() {
-        let app = launch(additionalArguments: [
+        // The app-owned interface stays English even on a German iPhone.
+        continueAfterFailure = false
+        let app = XCUIApplication()
+        app.launchArguments = [
+            "-AppleLanguages", "(de)", "-AppleLocale", "de_DE", "-metisServer", "",
             "-metis.app-lock-fixture", "unavailable", "-metis.app-lock-reset"
-        ])
+        ]
+        app.launch()
         signIn(app, server: "http://localhost:43100")
         _ = authenticatedWebWorkspace(in: app)
         func openSettings() {
             let controls = app.buttons["metis.appControlsFallback"]
             XCTAssertTrue(controls.waitForExistence(timeout: 5))
             controls.tap()
+            let sheet = appControlsSheet(in: app)
+            XCTAssertTrue(sheet.waitForExistence(timeout: 5))
+            XCTAssertTrue(sheet.staticTexts["iPhone controls"].exists)
+            XCTAssertFalse(sheet.staticTexts["localhost"].exists)
+            XCTAssertFalse(sheet.staticTexts["http://localhost:43100"].exists)
+            capture(app, named: "beta18-controls-without-server-address")
             let settings = app.buttons["metis.iPhoneSettings"]
             revealInControls(settings, in: app)
             settings.tap()

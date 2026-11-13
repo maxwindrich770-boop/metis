@@ -13,6 +13,7 @@ struct WebWorkspacePolicySmoke {
             try verifyFrames()
             try verifyDownloadNames()
             try verifyModelPreferences()
+            try verifyOnboardingCompletion()
             print("Web workspace policy smoke passed")
         } catch {
             FileHandle.standardError.write(Data("Web workspace policy smoke failed: \(error)\n".utf8))
@@ -25,6 +26,41 @@ struct WebWorkspacePolicySmoke {
     }
 
     private static func url(_ value: String) -> URL { URL(string: value)! }
+
+    private static func verifyOnboardingCompletion() throws {
+        let suite = "metis-onboarding-smoke-\(UUID().uuidString)"
+        let defaults = UserDefaults(suiteName: suite)!
+        defer { defaults.removePersistentDomain(forName: suite) }
+        let alice = "metis:onboarding:v1:fixture-alice:browser"
+        let bob = "metis:onboarding:v1:fixture-bob:browser"
+        let origin = "https://metis.example"
+        let done = MetisWebOnboardingPolicy.completedValue
+        try check(MetisWebOnboardingPolicy.completedKeys(origin: origin, defaults: defaults).isEmpty,
+                  "A fresh installation must not skip the guide")
+        try check(MetisWebOnboardingPolicy.recordCompletion(key: alice, value: done, origin: origin, defaults: defaults),
+                  "A completed guide was not saved")
+        let relaunched = UserDefaults(suiteName: suite)!
+        try check(MetisWebOnboardingPolicy.completedKeys(origin: origin, defaults: relaunched) == [alice],
+                  "Completion did not survive recreation of the preferences store")
+        try check(!MetisWebOnboardingPolicy.completedKeys(origin: origin, defaults: defaults).contains(bob),
+                  "One account must not complete another account's guide")
+        try check(MetisWebOnboardingPolicy.completedKeys(origin: "https://other.example", defaults: defaults).isEmpty,
+                  "Completion escaped its server origin")
+        for key in ["metis:onboarding:v1::browser", "auth_token", "x_model", "metis:onboarding:v1:alice:desktop"] {
+            try check(!MetisWebOnboardingPolicy.recordCompletion(key: key, value: done, origin: origin, defaults: defaults),
+                      "An unrelated storage key was persisted")
+        }
+        for value in ["{}", "invalid", #"{"version":1,"phase":"welcome","tourIndex":0}"#,
+                      #"{"version":2,"phase":"done","tourIndex":0}"#,
+                      #"{"version":true,"phase":"done","tourIndex":0}"#,
+                      #"{"version":1,"phase":"done","tourIndex":1}"#,
+                      String(repeating: " ", count: 1025)] {
+            try check(!MetisWebOnboardingPolicy.recordCompletion(key: bob, value: value, origin: origin, defaults: defaults),
+                      "An unfinished or invalid guide was marked complete")
+        }
+        try check(MetisWebOnboardingPolicy.completedKeys(origin: origin, defaults: defaults) == [alice],
+                  "Rejected writes changed the saved completion")
+    }
 
     private static func verifyOrigins() throws {
         let server = url("https://metis.example")

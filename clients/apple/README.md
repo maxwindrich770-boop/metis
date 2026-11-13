@@ -230,12 +230,43 @@ use a shared material background with an opaque accessibility fallback. App-only
 composer CSS keeps editable text at least 16px to prevent iOS focus autozoom
 while preserving deliberate pinch zoom.
 
-The native session now preserves only the Web UI's model-selection storage
+The native session preserves the Web UI's model-selection storage
 family (its configured-prefix `_model` and `_model_params` keys). Preferences
 stay bound to the verified origin/session in Keychain and are restored before
 Web UI hydration; cookies and other Web storage remain nonpersistent. Model IDs
 are opaque and the canonical Web UI still validates them and parameter choices
 against the current model catalog. Logout/account switching clears this cache.
+
+The app also preserves **completed** getting-started guides locally in
+UserDefaults. This is a separate, narrow allowlist for the Web UI's
+`metis:onboarding:v1:<encoded-account-id>:browser` completion key. Each server
+origin and account has its own completion flag. The app restores it before
+page hydration, so finishing the guide survives app restarts and sign-out.
+It does not mark an unfinished guide complete, hide the server's setup wizard,
+persist credentials or switch WebKit to a shared/persistent data store.
+Explicitly reopening "Getting started" remains available. Server onboarding
+logic and deployment are unchanged; reinstalling/clearing app data can reset
+these local flags.
+
+App-owned strings ship in English, independently of the iPhone's preferred
+language. Server-delivered content and user messages are not translated or
+rewritten. The native iPhone controls sheet does not receive or display the
+server address; the existing explicit reveal control remains in iPhone settings.
+
+Run the portable bridge regressions on the server:
+
+```sh
+node --test clients/apple/Tests/onboarding-bridge.test.mjs
+```
+
+The JavaScript tests execute the exact injected script with disposable storage;
+they do not prove WebKit message delivery, Swift compilation or the rendered UI.
+On a Mac, also compile/run `WebWorkspacePolicySmoke.swift` with
+`MetisiOS/MetisWebWorkspace.swift`, then run
+`testServerAddressRequiresRevealAndHidesWhenLeavingSettings` (German locale)
+and the existing model-preference persistence UI regressions. Verify the guide
+once before and after a real app termination. Those Mac checks are still pending
+for this privacy/language/onboarding change.
 
 Startup uses a neutral session-restoration view until the saved cookie has been
 checked against the server. A network error offers Retry without flashing the

@@ -89,6 +89,83 @@ enum MetisWebPreferencePolicy {
     }
 }
 
+/// The ephemeral WebKit store must not forget a completed first-run guide.
+/// Persist only completion, scoped by the server origin and the Web UI's account key.
+enum MetisWebOnboardingPolicy {
+    private static let preferencePrefix = "metis.web-onboarding.completed:"
+    static let completedValue = #"{"version":1,"phase":"done","tourIndex":0}"#
+    static let maximumAccounts = 128
+
+    static func isSupportedKey(_ key: String) -> Bool {
+        let prefix = "metis:onboarding:v1:"
+        let suffix = ":browser"
+        return key.hasPrefix(prefix) && key.hasSuffix(suffix)
+            && key.utf8.count <= 512 && key.count > prefix.count + suffix.count
+    }
+
+    static func isCompletedValue(_ value: String) -> Bool {
+        struct State: Decodable { let version: Int; let phase: String; let tourIndex: Int }
+        guard value.utf8.count <= 1024, let data = value.data(using: .utf8),
+              let state = try? JSONDecoder().decode(State.self, from: data) else { return false }
+        return state.version == 1 && state.phase == "done" && state.tourIndex == 0
+    }
+
+    static func completedKeys(origin: String, defaults: UserDefaults = .standard) -> [String] {
+        Array(Set((defaults.stringArray(forKey: preferencePrefix + origin) ?? [])
+            .filter(isSupportedKey))).sorted().prefix(maximumAccounts).map { $0 }
+    }
+
+    @discardableResult
+    static func recordCompletion(key: String, value: String, origin: String,
+                                 defaults: UserDefaults = .standard) -> Bool {
+        guard isSupportedKey(key), isCompletedValue(value) else { return false }
+        var keys = completedKeys(origin: origin, defaults: defaults)
+        if !keys.contains(key) {
+            guard keys.count < maximumAccounts else { return false }
+            keys.append(key)
+        }
+        defaults.set(keys.sorted(), forKey: preferencePrefix + origin)
+        return true
+    }
+
+    // Executed before page hydration; no cookies, chat content or arbitrary storage.
+    static let userScript = #"""
+    (() => {
+      if (window.top !== window || location.origin !== new URL(metisOnboardingOrigin).origin) return;
+      const handler = window.webkit?.messageHandlers?.metisOnboarding;
+      if (!handler) return;
+      const prefix = 'metis:onboarding:v1:', suffix = ':browser';
+      const supported = key => typeof key === 'string' && key.startsWith(prefix) &&
+        key.endsWith(suffix) && key.length > prefix.length + suffix.length &&
+        new TextEncoder().encode(key).length <= 512;
+      const completed = value => {
+        if (typeof value !== 'string' || new TextEncoder().encode(value).length > 1024) return false;
+        try {
+          const state = JSON.parse(value);
+          return state?.version === 1 && state.phase === 'done' && state.tourIndex === 0;
+        } catch { return false; }
+      };
+      try {
+        const storage = window.localStorage;
+        const nativeSet = Storage.prototype.setItem;
+        for (const key of metisCompletedOnboardingKeys) {
+          if (supported(key)) nativeSet.call(storage, key, '{"version":1,"phase":"done","tourIndex":0}');
+        }
+        Storage.prototype.setItem = function(key, value) {
+          nativeSet.apply(this, arguments);
+          key = String(key);
+          if (this === storage && supported(key)) {
+            const stored = storage.getItem(key);
+            if (completed(stored)) handler.postMessage({key, value: stored});
+          }
+        };
+      } catch {
+        // Do not force completion if the first-party page cannot use Web storage.
+      }
+    })();
+    """#
+}
+
 #if canImport(WebKit) && canImport(UIKit)
 import Combine
 import UIKit
@@ -109,6 +186,8 @@ private final class MetisAppControlsBridge: NSObject, WKScriptMessageHandler {
         Task { @MainActor [weak self] in
             if message.name == "metisModelPreferences" {
                 self?.owner?.receiveModelPreferences(message)
+            } else if message.name == "metisOnboarding" {
+                self?.owner?.receiveOnboarding(message)
             } else {
                 self?.owner?.receiveAppControls(message)
             }
@@ -192,6 +271,7 @@ final class MetisWebWorkspace: NSObject, ObservableObject {
         webView.scrollView.automaticallyAdjustsScrollIndicatorInsets = false
         installAppPresentation()
         installModelPreferences()
+        installOnboardingPersistence()
         cookieObserver.owner = self
         configuration.websiteDataStore.httpCookieStore.add(cookieObserver)
         observations = [
@@ -244,6 +324,45 @@ final class MetisWebWorkspace: NSObject, ObservableObject {
         appControlsBridge.owner = self
         controller.add(appControlsBridge, name: "metisAppControls")
         controller.addUserScript(WKUserScript(source: source, injectionTime: .atDocumentEnd, forMainFrameOnly: true))
+    }
+
+    private static let onboardingScriptMarker = "/* Metis onboarding completion bridge */"
+
+    private func installOnboardingPersistence() {
+        webView.configuration.userContentController.add(appControlsBridge, name: "metisOnboarding")
+        refreshOnboardingScript()
+    }
+
+    private func refreshOnboardingScript() {
+        guard !invalidated,
+              let originData = try? JSONEncoder().encode(client.origin),
+              let originLiteral = String(data: originData, encoding: .utf8),
+              let data = try? JSONEncoder().encode(MetisWebOnboardingPolicy.completedKeys(origin: client.origin)),
+              let literal = String(data: data, encoding: .utf8) else { return }
+        let source = Self.onboardingScriptMarker + """
+        {
+          const metisOnboardingOrigin = \(originLiteral);
+          const metisCompletedOnboardingKeys = \(literal);
+          \(MetisWebOnboardingPolicy.userScript)
+        }
+        """
+        let controller = webView.configuration.userContentController
+        let others = controller.userScripts.filter { !$0.source.hasPrefix(Self.onboardingScriptMarker) }
+        controller.removeAllUserScripts()
+        others.forEach(controller.addUserScript)
+        controller.addUserScript(WKUserScript(source: source, injectionTime: .atDocumentStart, forMainFrameOnly: true))
+    }
+
+    fileprivate func receiveOnboarding(_ message: WKScriptMessage) {
+        guard !invalidated, started, !authorizationLost,
+              message.name == "metisOnboarding", message.webView === webView,
+              message.frameInfo.isMainFrame, trusted(message.frameInfo.securityOrigin),
+              let server, let url = message.frameInfo.request.url,
+              MetisWebPolicy.isSameOrigin(url, server: server),
+              let body = message.body as? [String: String], Set(body.keys) == Set(["key", "value"]),
+              let key = body["key"], let value = body["value"],
+              MetisWebOnboardingPolicy.recordCompletion(key: key, value: value, origin: client.origin) else { return }
+        refreshOnboardingScript()
     }
 
     private static let preferenceScriptMarker = "/* Metis model preference bridge */"
@@ -460,6 +579,7 @@ final class MetisWebWorkspace: NSObject, ObservableObject {
         appControlsRequested = false
         webView.configuration.userContentController.removeScriptMessageHandler(forName: "metisAppControls")
         webView.configuration.userContentController.removeScriptMessageHandler(forName: "metisModelPreferences")
+        webView.configuration.userContentController.removeScriptMessageHandler(forName: "metisOnboarding")
         webModelPreferences = nil
         webView.configuration.userContentController.removeAllUserScripts()
         let store = webView.configuration.websiteDataStore
