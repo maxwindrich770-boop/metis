@@ -1,6 +1,6 @@
 # Metis for iPhone
 
-Developer Beta 0.1.20 conceals the server address in iPhone settings until an
+Public Beta 0.1.20 conceals the server address in iPhone settings until an
 explicit reveal, hides it again on backgrounding or leaving settings, and keeps
 project notes selected when opening them from a project. Server updates use the
 same Settings and maintenance screen as the Web UI; the native workspace keeps
@@ -131,10 +131,10 @@ watchOS 8 deployment support in Xcode 26.6. A successful source typecheck at
 
 ## Build version and notification placement
 
-The iPhone marketing version is `0.1.$(CURRENT_PROJECT_VERSION)`. Build 17
-therefore reports **0.1.17** in iPhone settings without a separate UI version
+The iPhone marketing version is `0.1.$(CURRENT_PROJECT_VERSION)`. Build 20
+therefore reports **0.1.20** in iPhone settings without a separate UI version
 string. Settings appends the optional `METIS_RELEASE_CHANNEL` from the bundle,
-currently **Developer Beta**, so the current display is **0.1.17 Developer Beta**. Apple bundle version
+currently **Public Beta**, so the current display is **0.1.20 Public Beta**. Apple bundle version
 metadata remains numeric; an empty release channel shows only that version.
 
 Inside the iPhone Web workspace, top Sonner notices retain the library's
