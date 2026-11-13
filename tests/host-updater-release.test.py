@@ -1,6 +1,8 @@
 import importlib.util
 import json
 import os
+import pwd
+import subprocess
 from pathlib import Path
 import sqlite3
 import sys
@@ -39,7 +41,7 @@ class ReleaseTests(unittest.TestCase):
         self.validate = patch.object(release, "validate_release", side_effect=lambda path, *_: path)
         self.validate.start()
         self.runner = patch.object(release, "run", side_effect=lambda command, **_: self.commands.append(command))
-        self.runner.start()
+        self.run_mock = self.runner.start()
         self.pid = patch.object(release, "unit_pid", side_effect=lambda service: 101 if "worker" in service else 102)
         self.pid_mock = self.pid.start()
 
@@ -108,6 +110,21 @@ class ReleaseTests(unittest.TestCase):
         (self.new / "escape").symlink_to(self.root / "data")
         with self.assertRaises(ValueError):
             release.validate_release(self.new, self.config["releasesDir"])
+
+    def test_failed_build_removes_only_its_temporary_source_tree(self):
+        build_dir = self.root / "builds"
+        build_dir.mkdir()
+        overlay = self.root / "overlay.patch"
+        overlay.write_text("reviewed patch")
+        config = {"buildDir": str(build_dir), "buildUser": pwd.getpwuid(os.getuid()).pw_name,
+                  "repository": "https://example.org/metis.git", "nodePath": "/usr/bin/node",
+                  "corepackPath": "/usr/bin/corepack", "overlayPatch": str(overlay),
+                  "protectedPaths": [str(self.root / "data")]}
+        self.run_mock.side_effect = subprocess.CalledProcessError(1, ["isolated-build"])
+        with self.assertRaises(subprocess.CalledProcessError):
+            release.prepare_build(config, {"channel": "commits", "ref": "a" * 40}, "b" * 64)
+        self.assertEqual(list(build_dir.iterdir()), [])
+        self.assertTrue((self.root / "data/chat.sqlite").exists())
 
     def test_sandboxed_build_failure_cannot_reach_activation(self):
         with patch.object(release.os, "geteuid", return_value=0):

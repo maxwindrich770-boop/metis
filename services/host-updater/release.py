@@ -252,17 +252,22 @@ def prepare_build(config, request, overlay_hash):
     command = ["/usr/bin/systemd-run", "--unit=metis-release-build-" + uuid.uuid4().hex,
                "--wait", "--pipe", "--collect", "--property=User=" + config["buildUser"],
                "--property=WorkingDirectory=" + str(stage), "--property=UMask=0077",
-               "--property=NoNewPrivileges=yes", "--property=PrivateTmp=yes", "--property=PrivateDevices=yes",
+               "--property=RuntimeMaxSec=45min", "--property=NoNewPrivileges=yes",
+               "--property=PrivateTmp=yes", "--property=PrivateDevices=yes",
                "--property=ProtectSystem=strict", "--property=ProtectHome=yes",
                "--property=ReadWritePaths=" + str(stage)]
     if config["protectedPaths"]:
         command.append("--property=InaccessiblePaths=" + " ".join(config["protectedPaths"]))
     command += ["--", "/usr/bin/python3", str(Path(__file__).resolve()), "--build", str(stage / "build.json")]
-    run(command)
-    result = json.loads((stage / "result.json").read_text())
-    if result["overlayHash"] != overlay_hash:
-        raise ValueError("Built release used a different compatibility overlay")
-    return stage / "source", result["commit"]
+    try:
+        run(command)
+        result = json.loads((stage / "result.json").read_text())
+        if result["overlayHash"] != overlay_hash:
+            raise ValueError("Built release used a different compatibility overlay")
+        return stage / "source", result["commit"]
+    except BaseException:
+        shutil.rmtree(stage)
+        raise
 
 
 def main():
@@ -298,7 +303,11 @@ def main():
                 raise ValueError("Prepared source must be clean at the exact approved commit")
         else:
             source, commit = prepare_build(config, request, overlay_hash)
-        release = copy_release(config, source, commit, overlay_hash)
+        try:
+            release = copy_release(config, source, commit, overlay_hash)
+        finally:
+            if not args.prepared_source:
+                shutil.rmtree(source.parent)
         activate(config, release, commit)
 
 
