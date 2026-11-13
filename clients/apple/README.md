@@ -1,11 +1,16 @@
 # Metis for iPhone
 
-Developer Beta 0.1.19 conceals the server address in iPhone settings until an
+Developer Beta 0.1.20 conceals the server address in iPhone settings until an
 explicit reveal, hides it again on backgrounding or leaving settings, and keeps
 project notes selected when opening them from a project. Server updates use the
 same Settings and maintenance screen as the Web UI; the native workspace keeps
 that screen visible across temporary restart failures and reconnects automatically.
 The server still needs an operator-configured update execution path.
+
+The sign-in footer asks “Need a Metis server?” and opens the official
+[GitHub releases](https://github.com/f1shyondrugs/metis/releases) through
+“Get Metis on GitHub”. This link is independent of the entered server address;
+it sends no login fields, and returning from the browser preserves the draft.
 
 The native iPhone usage popover shows each discovered quota window once, with
 12-point spacing below the heading and between windows in portrait and landscape.

@@ -1,6 +1,9 @@
 {
   "sourceLanguage": "en",
   "strings": {
+    "Need a Metis server?": {},
+    "Get Metis on GitHub": {},
+    "Opens GitHub releases in your browser.": {},
     "Not available": {},
     "Protect Metis with Face ID": {},
     "Protect Metis with Touch ID": {},

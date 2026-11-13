@@ -450,6 +450,28 @@ private struct RootView: View {
                                 .frame(maxWidth: .infinity, minHeight: 44)
                         }
                     }
+
+                    VStack(spacing: 2) {
+                        Text("Need a Metis server?")
+                            .font(.footnote)
+                            .foregroundStyle(MetisTheme.muted)
+                        Link(destination: URL(string: "https://github.com/f1shyondrugs/metis/releases")!) {
+                            HStack(spacing: 6) {
+                                Text("Get Metis on GitHub")
+                                    .underline()
+                                    .fixedSize(horizontal: false, vertical: true)
+                                Image(systemName: "arrow.up.right")
+                                    .imageScale(.small)
+                                    .accessibilityHidden(true)
+                            }
+                            .font(.subheadline.weight(.medium))
+                            .frame(maxWidth: .infinity, minHeight: 44)
+                            .contentShape(Rectangle())
+                        }
+                        .accessibilityHint("Opens GitHub releases in your browser.")
+                        .accessibilityIdentifier("metis.getMetis")
+                    }
+                    .multilineTextAlignment(.center)
                 }
                 .frame(maxWidth: 420)
                 .padding(.horizontal, 24)

@@ -1,4 +1,5 @@
 import XCTest
+import UIKit
 
 final class MetisUITests: XCTestCase {
     private struct NoticeMetrics: Decodable {
@@ -44,7 +45,7 @@ final class MetisUITests: XCTestCase {
         XCTAssertTrue(app.navigationBars["iPhone settings"].waitForExistence(timeout: 10))
         let version = app.descendants(matching: .any)["metis.appVersion"].firstMatch
         XCTAssertTrue(version.waitForExistence(timeout: 5))
-        XCTAssertEqual(version.value as? String, "0.1.19 Developer Beta")
+        XCTAssertEqual(version.value as? String, "0.1.20 Developer Beta")
         capture(app, named: "build14-version-in-native-settings")
     }
 
@@ -66,6 +67,80 @@ final class MetisUITests: XCTestCase {
         XCTAssertGreaterThanOrEqual(try XCTUnwrap(value.minTop), value.safeTop + 8)
         XCTAssertGreaterThanOrEqual(try XCTUnwrap(value.minLeft), value.safeLeft)
         XCTAssertLessThanOrEqual(try XCTUnwrap(value.maxRight), value.width - value.safeRight)
+    }
+
+    @MainActor
+    func testGetMetisLinkOpensReleasesAndPreservesLoginDraft() {
+        let app = launch(additionalArguments: ["-AppleInterfaceStyle", "Light"])
+        let server = app.textFields["metis.server"]
+        XCTAssertTrue(server.waitForExistence(timeout: 8))
+        server.tap()
+        server.typeText("https://example.invalid")
+        let username = app.textFields["metis.username"]
+        username.tap()
+        username.typeText("synthetic-login-link-draft")
+        // Dismiss the keyboard without submitting or sending the synthetic draft.
+        app.swipeDown()
+        let link = app.descendants(matching: .any)["metis.getMetis"].firstMatch
+        reveal(link, in: app)
+        XCTAssertEqual(link.label, "Get Metis on GitHub")
+        XCTAssertTrue(app.staticTexts["Need a Metis server?"].exists)
+        XCTAssertGreaterThanOrEqual(link.frame.height, 44)
+        capture(app, named: "beta20-login-release-link-light")
+        link.tap()
+        let safari = XCUIApplication(bundleIdentifier: "com.apple.mobilesafari")
+        XCTAssertTrue(safari.wait(for: .runningForeground, timeout: 15), safari.debugDescription)
+        let address = safari.textFields.firstMatch
+        if !address.waitForExistence(timeout: 5) {
+            let addressButton = safari.buttons["TabBarItemTitle"]
+            XCTAssertTrue(addressButton.waitForExistence(timeout: 5), safari.debugDescription)
+            addressButton.tap()
+        } else {
+            address.tap()
+        }
+        let destination = safari.textFields.firstMatch
+        XCTAssertTrue(destination.waitForExistence(timeout: 5), safari.debugDescription)
+        let correctDestination = XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in
+            (destination.value as? String)?.contains("github.com/f1shyondrugs/metis/releases") == true
+        }, object: destination)
+        XCTAssertEqual(XCTWaiter.wait(for: [correctDestination], timeout: 10), .completed, safari.debugDescription)
+        capture(safari, named: "beta20-official-github-releases-destination")
+        app.activate()
+        XCTAssertTrue(app.buttons["metis.signIn"].waitForExistence(timeout: 8))
+        XCTAssertEqual(server.value as? String, "https://example.invalid")
+        XCTAssertEqual(username.value as? String, "synthetic-login-link-draft")
+    }
+
+    @MainActor
+    func testLoginReleaseHintRemainsReachableInDarkModeAndLargeText() {
+        continueAfterFailure = false
+        let app = XCUIApplication()
+        defer { XCUIDevice.shared.orientation = .portrait }
+        for (name, large, orientation) in [
+            ("dark", false, UIDeviceOrientation.portrait),
+            ("large-text", true, UIDeviceOrientation.portrait),
+            ("landscape-large-text", true, UIDeviceOrientation.landscapeLeft)
+        ] {
+            app.terminate()
+            XCUIDevice.shared.orientation = orientation
+            app.launchArguments = [
+                "-AppleLanguages", "(en)", "-AppleLocale", "en_US", "-metisServer", "",
+                "-AppleInterfaceStyle", "Dark"
+            ]
+            if large {
+                app.launchArguments += ["-UIPreferredContentSizeCategoryName", "UICTContentSizeCategoryAccessibilityXXXL"]
+            }
+            app.launch()
+            XCTAssertTrue(app.buttons["metis.signIn"].waitForExistence(timeout: 8))
+            let link = app.descendants(matching: .any)["metis.getMetis"].firstMatch
+            reveal(link, in: app)
+            XCTAssertEqual(link.label, "Get Metis on GitHub")
+            XCTAssertGreaterThanOrEqual(link.frame.height, 44)
+            let window = app.windows.firstMatch.frame
+            XCTAssertGreaterThanOrEqual(link.frame.minX, window.minX)
+            XCTAssertLessThanOrEqual(link.frame.maxX, window.maxX)
+            capture(app, named: "beta20-login-release-link-" + name)
+        }
     }
 
     @MainActor
