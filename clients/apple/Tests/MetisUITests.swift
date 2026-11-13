@@ -133,22 +133,35 @@ final class MetisUITests: XCTestCase {
         let fixture = web.links["Open project note navigation fixture"]
         reveal(fixture, in: app)
         fixture.tap()
+        func assertNotesStayOpen(_ selection: String) {
+            let selected = web.staticTexts[selection]
+            XCTAssertTrue(selected.waitForExistence(timeout: 5), app.debugDescription)
+            XCTAssertTrue(selected.isHittable)
+            XCTAssertTrue(web.staticTexts["Route: notes"].exists)
+            let returnedToProject = XCTNSPredicateExpectation(
+                predicate: NSPredicate(format: "exists == true"), object: web.buttons["Open empty project"])
+            returnedToProject.isInverted = true
+            XCTAssertEqual(XCTWaiter.wait(for: [returnedToProject], timeout: 1), .completed,
+                           "The project route must not reopen after selecting notes")
+            XCTAssertTrue(selected.exists)
+        }
         let first = web.buttons["First project note"]
         XCTAssertTrue(first.waitForExistence(timeout: 10), app.debugDescription)
+        capture(app, named: "beta18-project-note-buttons-synthetic-fixture")
         first.tap()
-        XCTAssertTrue(web.staticTexts["Opened note: first"].waitForExistence(timeout: 5), app.debugDescription)
-        XCTAssertTrue(web.staticTexts["Route: notes"].exists)
+        assertNotesStayOpen("Opened note: first")
         capture(app, named: "beta18-project-note-opened-synthetic-fixture")
         web.buttons["Back to project"].tap()
         let second = web.buttons["Second project note"]
         XCTAssertTrue(second.waitForExistence(timeout: 5))
         second.tap()
-        XCTAssertTrue(web.staticTexts["Opened note: second"].waitForExistence(timeout: 5))
+        assertNotesStayOpen("Opened note: second")
+        capture(app, named: "beta18-second-project-note-opened-synthetic-fixture")
         web.buttons["Back to project"].tap()
         web.buttons["Open empty project"].tap()
         web.buttons["Open notes"].tap()
-        XCTAssertTrue(web.staticTexts["Opened notebook"].waitForExistence(timeout: 5))
-        XCTAssertTrue(web.staticTexts["Route: notes"].exists)
+        assertNotesStayOpen("Opened notebook")
+        capture(app, named: "beta18-empty-project-notebook-synthetic-fixture")
     }
 
     @MainActor

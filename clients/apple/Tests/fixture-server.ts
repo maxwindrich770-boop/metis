@@ -200,7 +200,8 @@ async function webProjectNotesFixture() {
   return `<!doctype html><html lang="en"><head><meta charset="utf-8">
     <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
     <title>Synthetic project note navigation fixture</title>
-    <style>body{font:17px system-ui;margin:16px}button{display:block;min-height:44px;margin:12px 0}
+    <style>body{font:17px system-ui;margin:16px;background:#161616;color:#f5f5f5;color-scheme:dark}
+      button{display:block;min-height:44px;margin:12px 0}svg{width:20px;height:20px}
       .project-home-scroll header,.project-home-scroll section:not([data-slot="project-home-notes"]){display:none}
       ul{list-style:none;padding:0}output{display:block}</style></head>
     <body><div id="project-notes-root"></div><script>${script}</script></body></html>`;
