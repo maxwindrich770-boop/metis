@@ -1,6 +1,6 @@
 # Metis for iPhone
 
-Developer Beta 0.1.18 conceals the server address in iPhone settings until an
+Developer Beta 0.1.19 conceals the server address in iPhone settings until an
 explicit reveal, hides it again on backgrounding or leaving settings, and keeps
 project notes selected when opening them from a project. Server updates use the
 same Settings and maintenance screen as the Web UI; the native workspace keeps

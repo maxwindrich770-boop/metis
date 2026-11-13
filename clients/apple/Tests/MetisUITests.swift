@@ -44,7 +44,7 @@ final class MetisUITests: XCTestCase {
         XCTAssertTrue(app.navigationBars["iPhone settings"].waitForExistence(timeout: 10))
         let version = app.descendants(matching: .any)["metis.appVersion"].firstMatch
         XCTAssertTrue(version.waitForExistence(timeout: 5))
-        XCTAssertEqual(version.value as? String, "0.1.18 Developer Beta")
+        XCTAssertEqual(version.value as? String, "0.1.19 Developer Beta")
         capture(app, named: "build14-version-in-native-settings")
     }
 
@@ -114,6 +114,43 @@ final class MetisUITests: XCTestCase {
         openSettings()
         XCTAssertEqual(address.value as? String, "Hidden")
         capture(app, named: "beta18-server-address-hidden-after-reopening")
+    }
+
+    @MainActor
+    func testCompletedGuideSurvivesAppRestartWithoutSkippingAnotherGuide() {
+        let app = launch()
+        signIn(app, server: "http://localhost:43100")
+        let probe = UUID().uuidString
+        func openProbe(_ value: String) -> XCUIElement {
+            let web = authenticatedWebWorkspace(in: app)
+            let link = web.links["Open synthetic guide completion fixture"]
+            reveal(link, in: app)
+            link.tap()
+            XCTAssertTrue(web.staticTexts["SYNTHETIC guide completion probe"].waitForExistence(timeout: 10))
+            let field = web.textFields["Fixture guide account"]
+            field.tap()
+            field.typeText(value)
+            web.buttons["Read saved guide"].tap()
+            return web
+        }
+        var web = openProbe(probe)
+        XCTAssertTrue(web.staticTexts["Guide is unfinished"].waitForExistence(timeout: 5))
+        web.buttons["Finish synthetic guide"].tap()
+        XCTAssertTrue(web.staticTexts["Guide completed in this session"].waitForExistence(timeout: 5))
+        // Return through a real navigation before termination to drain the posted
+        // native completion message; no guide state is fabricated by the test.
+        web.links["Return to authenticated web workspace fixture"].tap()
+        _ = authenticatedWebWorkspace(in: app)
+        capture(app, named: "beta19-guide-completed-before-restart")
+        app.terminate()
+        app.launchArguments = ["-AppleLanguages", "(en)", "-AppleLocale", "en_US"]
+        app.launch()
+        web = openProbe(probe)
+        XCTAssertTrue(web.staticTexts["Guide completion restored"].waitForExistence(timeout: 5))
+        capture(app, named: "beta19-guide-completion-restored-after-restart")
+        web.links["Return to authenticated web workspace fixture"].tap()
+        web = openProbe(UUID().uuidString)
+        XCTAssertTrue(web.staticTexts["Guide is unfinished"].waitForExistence(timeout: 5))
     }
 
     @MainActor

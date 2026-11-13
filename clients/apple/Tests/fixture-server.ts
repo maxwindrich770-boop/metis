@@ -51,6 +51,7 @@ function webWorkspaceFixture(username: string, cookieName: string, externalAddre
     <a href="/?fixture=project-notes">Open project note navigation fixture</a>
     <a href="/?fixture=update">Open server update fixture</a>
     <a href="/?fixture=model-preferences">Open synthetic model preference storage fixture</a>
+    <a href="/?fixture=onboarding">Open synthetic guide completion fixture</a>
     <p id="error" role="alert"></p>
   </main>
   <script>
@@ -121,6 +122,33 @@ function webWorkspaceFixture(username: string, cookieName: string, externalAddre
 </html>`;
 }
 
+
+// The production guide is server-owned. This probe exercises only its exact
+// storage contract through the real native WebKit bridge, with synthetic data.
+function webOnboardingFixture(username: string) {
+  const account = JSON.stringify(username).replaceAll("<", "\\u003c");
+  return `<!doctype html><html lang="en"><head><meta charset="utf-8">
+    <meta name="viewport" content="width=device-width,initial-scale=1">
+    <style>body{font:17px system-ui;margin:24px;background:#fff;color:#171717}
+    input,button,a{display:block;min-height:44px;margin:16px 0;font:inherit}</style></head><body>
+    <h1>SYNTHETIC guide completion probe</h1>
+    <label>Fixture guide account<input id="probe" aria-label="Fixture guide account"></label>
+    <button id="read">Read saved guide</button><button id="finish">Finish synthetic guide</button>
+    <p id="state" role="status">Enter a synthetic guide account.</p>
+    <a href="/">Return to authenticated web workspace fixture</a>
+    <script>
+      const account = ${account};
+      const key = () => "metis:onboarding:v1:" + encodeURIComponent(account + ":" + document.getElementById("probe").value) + ":browser";
+      document.getElementById("read").onclick = () => {
+        const value = JSON.parse(localStorage.getItem(key()) || "null");
+        document.getElementById("state").textContent = value?.phase === "done" ? "Guide completion restored" : "Guide is unfinished";
+      };
+      document.getElementById("finish").onclick = () => {
+        localStorage.setItem(key(), JSON.stringify({version:1,phase:"done",tourIndex:0}));
+        document.getElementById("state").textContent = "Guide completed in this session";
+      };
+    </script></body></html>`;
+}
 
 // Dedicated, authenticated synthetic drawer fixture; no notebooks or automations are mutated.
 let toastFixtureBundle: Promise<string> | undefined;
@@ -1085,6 +1113,7 @@ async function main() {
           : fixture === "update" || fixture === "update-restored" ? await webUpdateFixture()
           : fixture === "sidebar" ? webSidebarFixture(account.username)
           : fixture === "model-preferences" ? webModelPreferenceFixture()
+          : fixture === "onboarding" ? webOnboardingFixture(account.username)
           : fixture === "app-controls-subframe" ? webAppControlsSubframeFixture()
           : webWorkspaceFixture(account.username, CHAT_COOKIE, externalAddress));
         response = account ? new Response(html, {
