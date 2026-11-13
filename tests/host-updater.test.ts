@@ -35,9 +35,11 @@ async function withSocket(respond: (request: HostUpdateRequest) => unknown, run:
 }
 
 test("host updater authenticates peers, validates targets and persists results (Python)", () => {
-  const result = spawnSync("python3", ["tests/host-updater.test.py", "-v"], { cwd: root, encoding: "utf8", timeout: 15000 });
-  assert.equal(result.status, 0, result.stdout + result.stderr);
-  assert.match(result.stderr, /Ran \d+ tests/);
+  for (const suite of ["tests/host-updater.test.py", "tests/host-updater-release.test.py"]) {
+    const result = spawnSync("python3", [suite, "-v"], { cwd: root, encoding: "utf8", timeout: 15000 });
+    assert.equal(result.status, 0, result.stdout + result.stderr);
+    assert.match(result.stderr, /Ran \d+ tests/);
+  }
 });
 
 test("client validates job identity, typed status, broker errors and unavailable sockets", async () => {

@@ -68,6 +68,38 @@ Use the installation's intended service identity and configured ports. Do not
 replace a deployment's existing hardened service users or unit configuration
 with generic installer units.
 
+## Immutable releases and later upgrades
+
+`services/host-updater/release.py` is an optional fixed command for an immutable
+release deployment. Its operator-owned policy declares the repository, release
+pointers, unprivileged build account, toolchain, health URLs and actual service
+names. It builds in a separate systemd sandbox, checks the exact source/artifact
+identity, copies only tracked source plus dependencies/build output, makes a
+new immutable release, and atomically switches the release pointer. Only the
+configured web app restarts. Worker and gateway PIDs must remain unchanged and
+their actual HTTP health must pass. A failed activation restores the previous
+app. SQLite's online backup runs before switching; existing databases,
+credentials and environment files are never replaced.
+
+Keep the installed broker, release command, policy and compatibility patch
+outside every release. Keep `METIS_UPDATE_SOCKET` in the persistent operator
+environment or a systemd drop-in. The regular Linux installer already merges
+unknown environment keys from the old installation; it must retain this key.
+Do not copy a whole production environment into a build sandbox.
+
+Until the native integration is included upstream, the operator may provide a
+reviewed compatibility patch. The unprivileged build applies it with a checked
+three-way merge and runs the focused updater tests before building. An already
+fully integrated patch is recognized. A partial upstream merge or conflict
+fails **before activation**, leaving the current release running. An open pull
+request alone does not guarantee that future upstream releases contain a fix;
+refresh the patch when upstream changes require it.
+
+The release command accepts a direct operator-only `--prepared-source` option
+for bootstrapping an already verified clean checkout/build at the exact
+`--commit`. Do not put that option in the broker's fixed command. Normal app
+updates always fetch, build and validate the requested release/commit first.
+
 ## Checks and rollback
 
 Run `corepack pnpm exec tsx --test tests/host-updater.test.ts

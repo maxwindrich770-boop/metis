@@ -62,6 +62,21 @@ test("Linux checks preserved ports and does not silently accept a foreign MCP he
   assert.match(result.stderr, /18787.*PID 456/);
 }));
 
+test("Linux upgrades retain the operator host-updater socket without forwarding or replacing its policy", () => fixture(({ dir, exec }) => {
+  const old = path.join(dir, "previous.env");
+  const current = path.join(dir, "next.env");
+  writeFileSync(old, 'METIS_UPDATE_SOCKET="/run/operator-metis/update.sock"\nPORT="3100"\n');
+  writeFileSync(current, 'PORT="3200"\nMETIS_UPDATE_SOCKET=""\nNEW_KEY="retained"\n');
+  const script = 'set -e\nREPLACE_ENV_STASH="' + old + '"\n' + body("merge_preserved_env") +
+    '\nmerge_preserved_env "' + current + '"\n';
+  const result = exec(script);
+  assert.equal(result.status, 0, result.stderr);
+  const merged = readFileSync(current, "utf8");
+  assert.match(merged, /METIS_UPDATE_SOCKET="\/run\/operator-metis\/update.sock"/);
+  assert.match(merged, /PORT="3100"/);
+  assert.match(merged, /NEW_KEY="retained"/);
+}));
+
 test("Linux forces production mode after preserving an older environment", () => fixture(({ dir, exec }) => {
   const envFile = path.join(dir, "env");
   writeFileSync(envFile, 'NODE_ENV="development"\nPORT="13100"\n');
