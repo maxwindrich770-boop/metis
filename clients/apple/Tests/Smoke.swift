@@ -70,6 +70,8 @@ struct Smoke {
         guard address.url.scheme == "http", address.url.host == "localhost" else {
             throw SmokeFailure(step: "Smoke test requires the loopback fixture")
         }
+        try await verifySessionInvalidation(address: address)
+        if CommandLine.arguments.contains("--session-lifecycle-only") { return }
         for invalid in ["http://metis.example", "https://user:secret@metis.example", "https://metis.example/path"] {
             do {
                 _ = try ServerAddress(invalid)
@@ -181,6 +183,48 @@ struct Smoke {
         try check(try await bob.chats() == bobChats, "Alice's logout revoked Bob's session")
         try await bob.signOut()
         print("PASS: auth, session restore, detached logout, isolation, history, create, send, deduplication, cancel, SSE replay, live model selection, chunked attachment and live worker stream")
+    }
+
+
+    @MainActor private static func verifySessionInvalidation(address: ServerAddress) async throws {
+        let retiring = MetisAPI(address: address)
+        let expected = try await retiring.signIn(username: "metis-apple-fixture-alice", password: "apple-fixture-only")
+        var receivedReady = false
+        var activeStreamCancelled = false
+        do {
+            try await retiring.observeChats(after: 0) { event in
+                guard event.name == "ready" else { return true }
+                receivedReady = true
+                retiring.invalidate()
+                return false
+            }
+        } catch is CancellationError {
+            activeStreamCancelled = true
+        }
+        try check(receivedReady, "Chat stream did not reach the close barrier")
+
+        do {
+            _ = try await retiring.chats()
+            throw SmokeFailure(step: "Closed session accepted a late chat list request")
+        } catch is CancellationError {}
+        try check(activeStreamCancelled, "Session close did not cancel an active chat stream")
+
+        retiring.invalidate() // Closing twice must be harmless.
+        do {
+            try await retiring.observeChats(after: 0) { _ in false }
+            throw SmokeFailure(step: "Closed session accepted a late chat stream")
+        } catch is CancellationError {}
+        do {
+            let attachment = ChatMessage.Attachment(id: "test", name: "test.txt", storedName: "test.txt")
+            _ = try await retiring.download(chatID: "test", attachment: attachment)
+            throw SmokeFailure(step: "Closed session accepted a late attachment download")
+        } catch is CancellationError {}
+
+        let fresh = MetisAPI(address: address)
+        let chats = try await fresh.signIn(username: "metis-apple-fixture-alice", password: "apple-fixture-only")
+        try check(!expected.isEmpty && chats == expected, "Fresh session failed after closing the previous one")
+        try await fresh.signOut()
+        print("PASS: session close cancels active stream, rejects late reads and leaves fresh login working")
     }
 
     private static func verifyModelSelection(client: MetisAPI) async throws {

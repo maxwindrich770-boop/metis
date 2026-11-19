@@ -679,6 +679,7 @@ private struct RootView: View {
     }
 
     private func refresh(_ current: MetisAPI, allowWebCookieRetry: Bool = true) async {
+        guard client === current, !Task.isCancelled else { return }
         let archived = includeArchived
         let revision = chatRevision
         let requestedCookie = current.webSessionCookie()?.value

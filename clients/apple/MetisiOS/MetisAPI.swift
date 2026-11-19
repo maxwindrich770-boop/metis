@@ -363,7 +363,73 @@ private final class RejectRedirects: NSObject, URLSessionTaskDelegate {
     }
 }
 
-final class MetisAPI {
+// URLSession's async APIs create their underlying tasks after suspension. Closing
+// admission and cancelling the Swift work first keeps that creation from racing
+// invalidateAndCancel(), which can raise an Objective-C exception on Apple OSes.
+private final class MetisSessionLifetime: @unchecked Sendable {
+    let session: URLSession
+    private let lock = NSLock()
+    private var closed = false
+    private var pending: [UUID: @Sendable () -> Void] = [:]
+
+    init(_ session: URLSession) {
+        self.session = session
+    }
+
+    func run<Result: Sendable>(
+        _ operation: @escaping @Sendable (URLSession) async throws -> Result
+    ) async throws -> Result {
+        try Task.checkCancellation()
+        let id = UUID()
+        let work = try lock.withLock {
+            guard !closed else { throw CancellationError() }
+            let work = Task { [session] in
+                try Task.checkCancellation()
+                do {
+                    let result = try await operation(session)
+                    try Task.checkCancellation()
+                    return result
+                } catch {
+                    try Task.checkCancellation()
+                    throw error
+                }
+            }
+            pending[id] = { work.cancel() }
+            return work
+        }
+        defer { finished(id) }
+
+        return try await withTaskCancellationHandler {
+            let result = try await work.value
+            try Task.checkCancellation()
+            guard lock.withLock({ !closed }) else { throw CancellationError() }
+            return result
+        } onCancel: {
+            work.cancel()
+        }
+    }
+
+    func close() {
+        let cancellations: [@Sendable () -> Void]? = lock.withLock {
+            guard !closed else { return nil }
+            closed = true
+            return Array(pending.values)
+        }
+        guard let cancellations else { return }
+        for cancel in cancellations { cancel() }
+        if cancellations.isEmpty { session.invalidateAndCancel() }
+    }
+
+    private func finished(_ id: UUID) {
+        let invalidate = lock.withLock {
+            pending.removeValue(forKey: id)
+            return closed && pending.isEmpty
+        }
+        if invalidate { session.invalidateAndCancel() }
+    }
+}
+
+final class MetisAPI: Sendable {
     private struct Credentials: Encodable {
         let username: String
         let password: String
@@ -404,7 +470,8 @@ final class MetisAPI {
     private struct FieldErrors: Decodable { let fieldErrors: [String: String]? }
 
     private let address: ServerAddress
-    private let session: URLSession
+    private let lifetime: MetisSessionLifetime
+    private var cookies: HTTPCookieStorage? { lifetime.session.configuration.httpCookieStorage }
 
     init(address: ServerAddress, restore: StoredMetisSession? = nil) {
         self.address = address
@@ -424,25 +491,25 @@ final class MetisAPI {
             if address.url.scheme == "https" { properties[.secure] = "TRUE" }
             if let cookie = HTTPCookie(properties: properties) { configuration.httpCookieStorage?.setCookie(cookie) }
         }
-        session = URLSession(configuration: configuration, delegate: RejectRedirects(), delegateQueue: nil)
+        lifetime = MetisSessionLifetime(URLSession(configuration: configuration, delegate: RejectRedirects(), delegateQueue: nil))
     }
 
     deinit {
-        session.invalidateAndCancel()
+        lifetime.close()
     }
 
     func invalidate() {
-        session.invalidateAndCancel()
+        lifetime.close()
     }
 
     // Share only the validated first-party session, never page scripts or URLs.
     func webSessionCookie() -> HTTPCookie? {
-        session.configuration.httpCookieStorage?.cookies(for: address.url)?.first(where: validWebSessionCookie)
+        cookies?.cookies(for: address.url)?.first(where: validWebSessionCookie)
     }
 
     func updateWebSessionCookie(_ cookie: HTTPCookie) throws {
         guard validWebSessionCookie(cookie) else { throw MetisError.unauthorized }
-        session.configuration.httpCookieStorage?.setCookie(cookie)
+        cookies?.setCookie(cookie)
     }
 
     private func validWebSessionCookie(_ cookie: HTTPCookie) -> Bool {
@@ -455,7 +522,7 @@ final class MetisAPI {
     }
 
     func sessionRecord() -> StoredMetisSession? {
-        guard let cookie = session.configuration.httpCookieStorage?.cookies(for: address.url)?.first(where: {
+        guard let cookie = cookies?.cookies(for: address.url)?.first(where: {
             $0.name == "ai_chat_auth" && $0.path == "/" && (address.url.scheme != "https" || $0.isSecure)
         }), let expires = cookie.expiresDate, expires > Date() else { return nil }
         return StoredMetisSession(origin: address.url.absoluteString, cookie: cookie.value, expiresAt: expires)
@@ -659,8 +726,9 @@ final class MetisAPI {
 
     func download(chatID: String, attachment: ChatMessage.Attachment) async throws -> URL {
         guard validPathPart(chatID), validPathPart(attachment.storedName) else { throw MetisError.unexpectedResponse }
-        let (file, response) = try await session.download(from: endpoint(["uploads", chatID, attachment.storedName], query: []))
-        try validate(response)
+        let url = try endpoint(["uploads", chatID, attachment.storedName], query: [])
+        let (file, response) = try await lifetime.run { try await $0.download(from: url) }
+        try Self.validate(response)
         let folder = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString, isDirectory: true)
         try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
         let name = validPathPart(attachment.name) ? attachment.name : "Attachment"
@@ -705,30 +773,33 @@ final class MetisAPI {
     }
 
     func observeRun(
-        chatID: String, jobID: String, after: Int, receive: @MainActor (MetisEvent) -> Bool
+        chatID: String, jobID: String, after: Int, receive: @escaping @MainActor @Sendable (MetisEvent) -> Bool
     ) async throws {
         let query = runQuery(chatID: chatID, jobID: jobID, after: after) + [URLQueryItem(name: "stream", value: "1")]
         try await observe(["runs"], query: query, receive: receive)
     }
 
-    func observeChats(after: Int, receive: @MainActor (MetisEvent) -> Bool) async throws {
+    func observeChats(after: Int, receive: @escaping @MainActor @Sendable (MetisEvent) -> Bool) async throws {
         try await observe(["chats", "events"], query: [URLQueryItem(name: "after", value: String(after))], receive: receive)
     }
 
     private func observe(
-        _ path: [String], query: [URLQueryItem], receive: @MainActor (MetisEvent) -> Bool
+        _ path: [String], query: [URLQueryItem], receive: @escaping @MainActor @Sendable (MetisEvent) -> Bool
     ) async throws {
         var request = URLRequest(url: try endpoint(path, query: query), timeoutInterval: 45)
         request.setValue("text/event-stream", forHTTPHeaderField: "Accept")
-        let (bytes, response) = try await session.bytes(for: request)
-        defer { bytes.task.cancel() }
-        try validate(response)
-        guard response.mimeType == "text/event-stream" else { throw MetisError.unexpectedResponse }
-        var parser = SSEParser()
-        for try await byte in bytes {
-            guard let event = try parser.receive(byte) else { continue }
-            if event.name == "auth-expired" { throw MetisError.unauthorized }
-            if await !receive(event) { return }
+        try await lifetime.run { [request] session in
+            let (bytes, response) = try await session.bytes(for: request)
+            defer { bytes.task.cancel() }
+            try Self.validate(response)
+            guard response.mimeType == "text/event-stream" else { throw MetisError.unexpectedResponse }
+            var parser = SSEParser()
+            for try await byte in bytes {
+                guard let event = try parser.receive(byte) else { continue }
+                try Task.checkCancellation()
+                if event.name == "auth-expired" { throw MetisError.unauthorized }
+                if await !receive(event) { return }
+            }
         }
     }
 
@@ -748,7 +819,7 @@ final class MetisAPI {
         let headers = ifNoneMatch.map { ["If-None-Match": $0] } ?? [:]
         func fetchPage() async throws -> (Data, HTTPURLResponse) {
             let (data, response) = try await responseData(["chats", id], query: query, headers: headers)
-            if response.statusCode != 304 || ifNoneMatch == nil { try validate(response) }
+            if response.statusCode != 304 || ifNoneMatch == nil { try Self.validate(response) }
             return (data, response)
         }
         let result: (Data, HTTPURLResponse)
@@ -780,7 +851,7 @@ final class MetisAPI {
                 throw MetisError.questionFields(errors)
             }
         }
-        try validate(response)
+        try Self.validate(response)
         return try decode(data)
     }
 
@@ -796,7 +867,7 @@ final class MetisAPI {
             request.setValue("application/json", forHTTPHeaderField: "Content-Type")
         }
         for (key, value) in headers { request.setValue(value, forHTTPHeaderField: key) }
-        let (data, response) = try await session.data(for: request)
+        let (data, response) = try await lifetime.run { [request] in try await $0.data(for: request) }
         guard let http = response as? HTTPURLResponse else { throw MetisError.unexpectedResponse }
         return (data, http)
     }
@@ -823,7 +894,7 @@ final class MetisAPI {
         return url
     }
 
-    private func validate(_ response: URLResponse) throws {
+    private static func validate(_ response: URLResponse) throws {
         guard let http = response as? HTTPURLResponse else { throw MetisError.unexpectedResponse }
         if http.statusCode == 401 { throw MetisError.unauthorized }
         guard (200..<300).contains(http.statusCode) else {
