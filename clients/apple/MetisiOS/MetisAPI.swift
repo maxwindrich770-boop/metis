@@ -284,9 +284,9 @@ enum MetisError: LocalizedError {
         case .unauthorized:
             return "Your session is no longer valid. Sign in again."
         case .signInRejected:
-            return "The server rejected app sign-in. Check your login details or sign in on the server page."
+            return "The server rejected sign-in. Check the username and password for this server."
         case .signInSessionRejected:
-            return "The server accepted sign-in but rejected the app session. Try signing in on the server page."
+            return "The server accepted sign-in but could not establish an app session. Check the server’s session settings."
         case .unexpectedResponse:
             return "This server did not return a compatible Metis response."
         case .noModel:
@@ -312,6 +312,7 @@ enum MetisError: LocalizedError {
 
 struct ServerAddress {
     let url: URL
+    let httpOrigin: String
 
     init(_ input: String) throws {
         guard var parts = URLComponents(string: input.trimmingCharacters(in: .whitespacesAndNewlines)),
@@ -332,6 +333,12 @@ struct ServerAddress {
         parts.path = ""
         guard let url = parts.url else { throw MetisError.invalidServer }
         self.url = url
+        // Serialize the exact destination origin as an HTTP Origin value.
+        // Browser and server origin checks omit the default scheme port.
+        parts.host = host
+        if parts.port == (scheme == "https" ? 443 : 80) { parts.port = nil }
+        guard let origin = parts.url?.absoluteString else { throw MetisError.invalidServer }
+        httpOrigin = origin
     }
 }
 
@@ -578,13 +585,17 @@ final class MetisAPI: Sendable {
         let body = try JSONEncoder().encode(Credentials(username: username, password: password))
         let response: Acknowledgement
         do {
-            response = try await request(["auth"], method: "POST", body: body)
+            response = try await request(["auth"], method: "POST", body: body,
+                                         headers: ["Origin": address.httpOrigin])
         } catch MetisError.unauthorized {
             throw MetisError.signInRejected
         }
         guard response.ok else { throw MetisError.unexpectedResponse }
-        // A successful POST alone does not establish that the cookie was accepted.
+        // Apply the same first-party cookie checks and HTTPS protection
+        // as the Web workspace before using a newly issued session.
         do {
+            guard let cookie = webSessionCookie() else { throw MetisError.unauthorized }
+            try updateWebSessionCookie(cookie)
             return try await chats()
         } catch {
             try? await signOut()

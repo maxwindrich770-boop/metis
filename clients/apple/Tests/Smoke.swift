@@ -135,6 +135,7 @@ struct Smoke {
         }
         try await verifySessionInvalidation(address: address)
         if CommandLine.arguments.contains("--session-lifecycle-only") { return }
+        try await verifyFirstPartySignIn(address: address)
         for invalid in ["http://metis.example", "https://user:secret@metis.example", "https://metis.example/path"] {
             do {
                 _ = try ServerAddress(invalid)
@@ -253,6 +254,33 @@ struct Smoke {
         print("PASS: auth, session restore, detached logout, isolation, history, create, send, deduplication, cancel, SSE replay, live model selection, chunked attachment and live worker stream")
     }
 
+
+    private static func verifyFirstPartySignIn(address: ServerAddress) async throws {
+        try check(try ServerAddress("https://METIS-Fixture.example:443/").httpOrigin == "https://metis-fixture.example",
+                  "Default HTTPS port and path are excluded from Origin")
+        try check(try ServerAddress("https://metis-fixture.example:8443/").httpOrigin == "https://metis-fixture.example:8443",
+                  "An explicit nonstandard port must remain part of Origin")
+        try await setFixtureControl(address: address.url, state: "require-login-origin")
+        let client = MetisAPI(address: address)
+        let user = "metis-apple-fixture-alice"
+        let password = "apple-fixture-only"
+        do {
+            var request = URLRequest(url: address.url.appendingPathComponent("api/auth"))
+            request.httpMethod = "POST"
+            request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+            request.httpBody = try JSONEncoder().encode(["username": user, "password": password])
+            let (_, response) = try await URLSession.shared.data(for: request)
+            try check((response as? HTTPURLResponse)?.statusCode == 401, "The fixture must reject a login without Origin")
+            let chats = try await client.signIn(username: user, password: password)
+            try check(chats.map(\.title) == ["Fixture chat"], "The native login must authenticate with the exact origin")
+            try await client.signOut()
+        } catch {
+            try? await setFixtureControl(address: address.url, state: "default-login-origin")
+            throw error
+        }
+        try await setFixtureControl(address: address.url, state: "default-login-origin")
+        print("PASS: single native login sends the exact Origin and verifies the issued session")
+    }
 
     @MainActor private static func verifySessionInvalidation(address: ServerAddress) async throws {
         let retiring = MetisAPI(address: address)

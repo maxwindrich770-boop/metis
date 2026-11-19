@@ -25,7 +25,6 @@ private struct RootView: View {
     @State private var server = ""
     @State private var username = ""
     @State private var password = ""
-    @State private var serverSignIn: MetisServerSignIn?
     @State private var client: MetisAPI?
     @State private var webWorkspace: MetisWebWorkspace?
     @State private var iPhoneSettings = false
@@ -446,15 +445,6 @@ private struct RootView: View {
                         .accessibilityIdentifier("metis.signIn")
                         .disabled(!canSignIn)
 
-                        Button(action: beginServerSignIn) {
-                            Text("Sign in on server page")
-                                .font(.subheadline)
-                                .frame(maxWidth: .infinity, minHeight: 44)
-                                .contentShape(Rectangle())
-                        }
-                        .accessibilityIdentifier("metis.serverSignIn")
-                        .disabled(busy || (try? ServerAddress(server)) == nil)
-
                         if canRetrySession {
                             Button("Retry saved session") { Task { await restoreSession() } }
                                 .frame(maxWidth: .infinity, minHeight: 44)
@@ -494,9 +484,6 @@ private struct RootView: View {
             .toolbar(.hidden, for: .navigationBar)
             .onAppear { if server.isEmpty { server = savedServer } }
         }
-        .sheet(item: $serverSignIn) { flow in
-            MetisServerSignInSheet(flow: flow)
-        }
     }
 
     private var canSignIn: Bool {
@@ -532,36 +519,13 @@ private struct RootView: View {
             let address = try ServerAddress(server)
             let candidate = MetisAPI(address: address)
             let authenticatedChats = try await candidate.signIn(username: username, password: password)
-            await finishSignIn(candidate, chats: authenticatedChats)
+            let stored = await persist(candidate)
+            savedServer = address.url.absoluteString
+            connect(candidate, chats: authenticatedChats, stored: stored)
+            Task { await flushLogouts() }
         } catch {
             notice = message(for: error)
         }
-    }
-
-    private func beginServerSignIn() {
-        guard !busy, let address = try? ServerAddress(server) else { return }
-        signInFocus = nil
-        password = ""
-        notice = nil
-        serverSignIn = MetisServerSignIn(address: address) { id, candidate, authenticatedChats in
-            guard serverSignIn?.id == id, client == nil, !busy else {
-                candidate.invalidate()
-                return
-            }
-            busy = true
-            serverSignIn = nil
-            Task {
-                defer { busy = false }
-                await finishSignIn(candidate, chats: authenticatedChats)
-            }
-        }
-    }
-
-    private func finishSignIn(_ candidate: MetisAPI, chats: [ChatSummary]) async {
-        let stored = await persist(candidate)
-        savedServer = candidate.origin
-        connect(candidate, chats: chats, stored: stored)
-        Task { await flushLogouts() }
     }
 
     private func persist(_ candidate: MetisAPI) async -> StoredMetisSession? {
