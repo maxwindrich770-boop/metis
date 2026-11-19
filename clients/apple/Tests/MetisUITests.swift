@@ -1136,13 +1136,73 @@ final class MetisUITests: XCTestCase {
         let focused: Bool
         let dockHidden: Bool
         let editorFits: Bool
+        let panelTop: Double?
+        let panelBottom: Double?
+        let viewportHeight: Double
+    }
+
+    private var messageEditFixtureServer: String {
+        let port = ProcessInfo.processInfo.environment["METIS_MESSAGE_EDIT_FIXTURE_PORT"] ?? "43100"
+        return "http://localhost:\(port)"
+    }
+
+    @MainActor
+    func testMessageCorrectionDoesNotMoveWhenKeyboardClearsEditor() throws {
+        XCUIDevice.shared.orientation = .portrait
+        let app = launch(additionalArguments: ["-metis.synthetic-input-occlusion"])
+        signIn(app, server: messageEditFixtureServer)
+        let web = authenticatedWebWorkspace(in: app)
+        let link = web.links["Open message correction fixture"]
+        reveal(link, in: app)
+        link.tap()
+
+        let mode = web.buttons["Use mid-chat position"]
+        XCTAssertTrue(mode.waitForExistence(timeout: 10))
+        mode.tap()
+        web.buttons["Edit this message and resend"].tap()
+        let editor = web.textViews["Edit message"]
+        XCTAssertTrue(editor.waitForExistence(timeout: 5))
+
+        let prefix = "Message edit metrics: "
+        let status = web.staticTexts.matching(NSPredicate(format: "label BEGINSWITH %@", prefix)).firstMatch
+        func metrics() throws -> MessageEditMetrics {
+            try JSONDecoder().decode(MessageEditMetrics.self, from: Data(status.label.dropFirst(prefix.count).utf8))
+        }
+        let before = try metrics()
+        XCTAssertFalse(before.focused, "Measure the editor before it gets the keyboard")
+        XCTAssertTrue(before.editorFits)
+        capture(app, named: "iphone-message-correction-mid-chat-before-keyboard")
+
+        editor.tap()
+        let resized = XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in
+            guard let next = try? metrics() else { return false }
+            return next.focused && next.viewportHeight < before.viewportHeight - 200
+        }, object: app)
+        XCTAssertEqual(XCTWaiter.wait(for: [resized], timeout: 6), .completed)
+        XCTAssertTrue(app.staticTexts["metis.syntheticInputOcclusion"].exists)
+        let after = try metrics()
+        capture(app, named: "iphone-message-correction-mid-chat-with-keyboard")
+        let baselineBottom = try XCTUnwrap(before.panelBottom)
+        XCTAssertLessThan(baselineBottom, after.viewportHeight - 8,
+                          "Fixture must start entirely above the keyboard: \(before) → \(after)")
+        let baselineTop = try XCTUnwrap(before.panelTop)
+        let focusedTop = try XCTUnwrap(after.panelTop)
+        XCTAssertEqual(focusedTop, baselineTop, accuracy: 3,
+                       "An already visible correction field must stay in place: \(before) → \(after)")
+        XCTAssertTrue(after.editorFits)
+        XCTAssertTrue(after.dockHidden)
+        XCTAssertTrue(web.buttons["Save & resend"].isHittable)
+        let measurement = XCTAttachment(string: "KORREKTUR_POSITION_OHNE_TASTATUR=\(baselineTop)\nKORREKTUR_POSITION_MIT_TASTATUR=\(focusedTop)")
+        measurement.name = "iphone-message-correction-position"
+        measurement.lifetime = .keepAlways
+        add(measurement)
     }
 
     @MainActor
     func testMessageCorrectionKeepsEditorVisibleAndPreservesUnsentDraft() throws {
         XCUIDevice.shared.orientation = .portrait
         let app = launch(additionalArguments: ["-metis.synthetic-input-occlusion"])
-        signIn(app, server: "http://localhost:43100")
+        signIn(app, server: messageEditFixtureServer)
         let web = authenticatedWebWorkspace(in: app)
         let link = web.links["Open message correction fixture"]
         reveal(link, in: app)

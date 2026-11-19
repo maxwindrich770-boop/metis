@@ -8,7 +8,8 @@
   body { margin: 0; font: 16px system-ui; }
   .metis-shell { position: relative; height: 100dvh; display: flex; flex-direction: column; }
   header { padding: 12px; border-bottom: 1px solid #aaa; }
-  #metrics { font-size: 11px; overflow-wrap: anywhere; }
+  #metrics { font-size: 11px; height: 60px; overflow-wrap: anywhere; }
+  .position-test .messages { justify-content: center; padding-bottom: 330px; }
   .overflow-y-auto { flex: 1; min-height: 0; overflow-y: auto; overflow-anchor: none; }
   .messages { min-height: 100%; padding: 12px 12px 154px; display: flex; flex-direction: column; justify-content: flex-end; }
   article { align-self: flex-end; width: 82%; }
@@ -19,7 +20,7 @@
   aside { display: none; }
 </style>
 <main class="metis-shell">
-  <header><h1 style="font-size:16px;margin:0">Message correction fixture</h1><p id="metrics"></p></header>
+  <header><h1 style="font-size:16px;margin:0">Message correction fixture</h1><p id="metrics"></p><button id="position-mode">Use mid-chat position</button></header>
   <aside aria-label="Chats sidebar"><div><button aria-label="Open account menu"></button></div></aside>
   <div class="overflow-y-auto"><div class="messages"><article>
     <p id="message">Original test message</p><button id="edit" aria-label="Edit this message and resend">Edit</button>
@@ -33,6 +34,12 @@
   const edit = document.querySelector('#edit');
   const transcript = document.querySelector('.overflow-y-auto');
   const metrics = document.querySelector('#metrics');
+  const positionMode = document.querySelector('#position-mode');
+  positionMode.addEventListener('click', () => {
+    document.querySelector('.metis-shell').classList.add('position-test');
+    positionMode.hidden = true;
+    scheduleReport();
+  });
   function report() {
     const field = document.querySelector('textarea[aria-label="Edit message"]');
     const box = field?.parentElement.getBoundingClientRect();
@@ -42,6 +49,9 @@
       font: field ? parseFloat(getComputedStyle(field).fontSize) : 0,
       focused: !!field && document.activeElement === field,
       dockHidden: getComputedStyle(document.querySelector('footer')).visibility === 'hidden',
+      panelTop: box ? Math.round(box.top) : null,
+      panelBottom: box ? Math.round(box.bottom) : null,
+      viewportHeight: innerHeight,
       editorFits: !!box && box.left >= -1 && box.right <= innerWidth + 1 &&
         box.top >= transcript.getBoundingClientRect().top - 1 && box.bottom <= innerHeight + 1,
     });
@@ -69,8 +79,10 @@
     save.onclick = () => { message.textContent = field.value.trim(); close(); };
     message.hidden = edit.hidden = true;
     edit.after(container);
-    field.focus();
-    field.select();
+    if (!positionMode.hidden) {
+      field.focus();
+      field.select();
+    }
     scheduleReport();
   });
   document.addEventListener('focusin', scheduleReport);

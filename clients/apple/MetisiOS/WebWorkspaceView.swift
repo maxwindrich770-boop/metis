@@ -525,8 +525,14 @@ enum MetisAppWebPresentation {
         html[data-metis-native-app="ios"] .metis-shell:has(article textarea[aria-label="Edit message"]) [data-metis-app-composer-dock] {
           visibility: hidden;
         }
-        html[data-metis-native-app="ios"] .metis-shell [class~="overflow-y-auto"]:has(article textarea[aria-label="Edit message"]) {
-          margin-bottom: var(--metis-app-edit-keyboard-inset, 0px);
+        /* Add scroll range below the messages without resizing the transcript.
+           Resizing it can move an editor that the keyboard never covered. */
+        html[data-metis-native-app="ios"] .metis-shell [class~="overflow-y-auto"]:has(article textarea[aria-label="Edit message"])::after {
+          content: "";
+          display: block;
+          flex: none;
+          height: var(--metis-app-edit-scroll-space, 0px);
+          pointer-events: none;
         }
         /* UIKit already removes the keyboard from the web viewport. The
            server's transient visualViewport bottom offset must not remove it twice. */
@@ -650,7 +656,7 @@ enum MetisAppWebPresentation {
         const editor = document.querySelector(inlineEditorSelector);
         const transcript = editor?.closest('[class~="overflow-y-auto"]');
         if (inlineEditLayout && inlineEditLayout.transcript !== transcript) {
-          inlineEditLayout.transcript.style.removeProperty('--metis-app-edit-keyboard-inset');
+          inlineEditLayout.transcript.style.removeProperty('--metis-app-edit-scroll-space');
           inlineEditLayout = null;
         }
         if (!transcript) return;
@@ -658,16 +664,22 @@ enum MetisAppWebPresentation {
             inlineEditLayout.width === innerWidth && inlineEditLayout.height === innerHeight) return;
 
         inlineEditLayout = { editor, transcript, keyboardInset, width: innerWidth, height: innerHeight };
-        transcript.style.setProperty('--metis-app-edit-keyboard-inset', keyboardInset + 'px');
-        // Scroll only the transcript, and only when editing starts or its available
-        // space changes. Keep the full editor (including its actions) in view.
-        const panel = editor.parentElement.getBoundingClientRect();
         const viewport = transcript.getBoundingClientRect();
         const bottom = Math.min(viewport.bottom, innerHeight);
-        if (bottom <= viewport.top || !panel.height) return;
-        const top = viewport.top + 8;
+        const scrollSpace = keyboardInset > 0 ? Math.max(0, viewport.bottom - bottom) : 0;
+        if (scrollSpace > 0) {
+          transcript.style.setProperty('--metis-app-edit-scroll-space', scrollSpace + 'px');
+        } else {
+          transcript.style.removeProperty('--metis-app-edit-scroll-space');
+        }
+
+        // If the keyboard clears the editor, preserve the exact position.
+        // Otherwise scroll just enough to reveal the editor and its actions.
+        const panel = editor.parentElement.getBoundingClientRect();
+        const top = viewport.top;
+        if (bottom <= top || !panel.height || (panel.top >= top && panel.bottom <= bottom)) return;
         const shift = panel.height > bottom - top || panel.top < top
-          ? panel.top - top : Math.max(0, panel.bottom - bottom + 8);
+          ? panel.top - top : panel.bottom - bottom;
         if (Math.abs(shift) > 1) transcript.scrollTop += shift;
       };
       // Keep the empty welcome group together when a full keyboard occludes
