@@ -502,29 +502,37 @@ final class MetisAPI: Sendable {
         lifetime.close()
     }
 
-    // Share only the validated first-party session, never page scripts or URLs.
+    // Only the exact server's validated first-party session crosses the native/WebKit boundary.
     func webSessionCookie() -> HTTPCookie? {
-        cookies?.cookies(for: address.url)?.first(where: validWebSessionCookie)
+        cookies?.cookies(for: address.url)?.lazy.compactMap(sessionCookieForOrigin).first
     }
 
     func updateWebSessionCookie(_ cookie: HTTPCookie) throws {
-        guard validWebSessionCookie(cookie) else { throw MetisError.unauthorized }
-        cookies?.setCookie(cookie)
+        guard let checked = sessionCookieForOrigin(cookie) else { throw MetisError.unauthorized }
+        cookies?.setCookie(checked)
     }
 
-    private func validWebSessionCookie(_ cookie: HTTPCookie) -> Bool {
-        let domain = cookie.domain
-        guard let host = address.url.host, domain.caseInsensitiveCompare(host) == .orderedSame,
+    private func sessionCookieForOrigin(_ cookie: HTTPCookie) -> HTTPCookie? {
+        guard let host = address.url.host, cookie.domain.caseInsensitiveCompare(host) == .orderedSame,
               cookie.name == "ai_chat_auth", cookie.path == "/", cookie.isHTTPOnly,
-              !cookie.value.isEmpty, let expires = cookie.expiresDate, expires > Date(),
-              address.url.scheme != "https" || cookie.isSecure else { return false }
-        return true
+              !cookie.value.isEmpty, let expires = cookie.expiresDate, expires > Date() else { return nil }
+        // First-party HTTPS requests are pinned to this origin and do not follow redirects.
+        // A TLS-terminating proxy may omit Secure on the response; strengthen the
+        // copy exported by the app rather than exposing an insecure cookie to WebKit.
+        guard address.url.scheme == "https", !cookie.isSecure else { return cookie }
+        guard var properties = cookie.properties else { return nil }
+        properties[.secure] = "TRUE"
+        properties[HTTPCookiePropertyKey(rawValue: "HttpOnly")] = "TRUE"
+        guard let secure = HTTPCookie(properties: properties), secure.isSecure, secure.isHTTPOnly,
+              secure.name == cookie.name, secure.domain == cookie.domain, secure.path == cookie.path,
+              secure.value == cookie.value, secure.expiresDate == expires,
+              secure.isSessionOnly == cookie.isSessionOnly,
+              secure.sameSitePolicy == cookie.sameSitePolicy else { return nil }
+        return secure
     }
 
     func sessionRecord() -> StoredMetisSession? {
-        guard let cookie = cookies?.cookies(for: address.url)?.first(where: {
-            $0.name == "ai_chat_auth" && $0.path == "/" && (address.url.scheme != "https" || $0.isSecure)
-        }), let expires = cookie.expiresDate, expires > Date() else { return nil }
+        guard let cookie = webSessionCookie(), let expires = cookie.expiresDate else { return nil }
         return StoredMetisSession(origin: address.url.absoluteString, cookie: cookie.value, expiresAt: expires)
     }
 

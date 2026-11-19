@@ -18,6 +18,67 @@ struct Smoke {
         }
     }
 
+    private static func verifyHTTPSCookieCompatibility() throws {
+        let address = try ServerAddress("https://metis-fixture.example:8443")
+        let api = MetisAPI(address: address)
+        func cookie(host: String, path: String = "/", secure: Bool = false,
+                    httpOnly: Bool = true, expires: Date = Date().addingTimeInterval(3600)) throws -> HTTPCookie {
+            var properties: [HTTPCookiePropertyKey: Any] = [
+                .name: "ai_chat_auth", .value: "synthetic-cookie-only", .path: path,
+                .domain: host, .expires: expires,
+            ]
+            if secure { properties[.secure] = "TRUE" }
+            if httpOnly { properties[HTTPCookiePropertyKey(rawValue: "HttpOnly")] = "TRUE" }
+            guard let cookie = HTTPCookie(properties: properties) else {
+                throw SmokeFailure(step: "Could not construct test cookie")
+            }
+            return cookie
+        }
+        let incoming = try cookie(host: "metis-fixture.example")
+        try check(!incoming.isSecure && incoming.isHTTPOnly, "Fixture must omit Secure")
+        try api.updateWebSessionCookie(incoming)
+        guard let bridged = api.webSessionCookie(), let record = api.sessionRecord() else {
+            throw SmokeFailure(step: "HTTPS cookie was discarded instead of secured")
+        }
+        try check(bridged.isSecure && bridged.isHTTPOnly && bridged.domain == incoming.domain
+                  && bridged.path == incoming.path && bridged.value == incoming.value
+                  && bridged.expiresDate == incoming.expiresDate && record.origin == address.url.absoluteString,
+                  "Cookie upgrade lost security properties or changed its scope")
+        let ready = try cookie(host: "metis-fixture.example", secure: true)
+        try api.updateWebSessionCookie(ready)
+        try check(api.webSessionCookie()?.isSecure == true, "Normal Secure cookies must still work")
+        for foreign in [
+            try cookie(host: ".metis-fixture.example"),
+            try cookie(host: "other.example"),
+            try cookie(host: "child.metis-fixture.example"),
+            try cookie(host: "metis-fixture.example", path: "/unrelated"),
+            try cookie(host: "metis-fixture.example", httpOnly: false),
+            try cookie(host: "metis-fixture.example", expires: Date().addingTimeInterval(-3600)),
+        ] {
+            do {
+                try api.updateWebSessionCookie(foreign)
+                throw SmokeFailure(step: "Foreign or invalid cookie became an app session")
+            } catch MetisError.unauthorized {}
+        }
+        // Match deployed responses parsed by Foundation, including SameSite=Lax.
+        let formatter = DateFormatter()
+        formatter.locale = Locale(identifier: "en_US_POSIX")
+        formatter.timeZone = TimeZone(secondsFromGMT: 0)
+        formatter.dateFormat = "EEE, dd MMM yyyy HH:mm:ss 'GMT'"
+        let expiry = formatter.string(from: Date().addingTimeInterval(3600))
+        let header = "ai_chat_auth=synthetic-rotated-cookie; Path=/; Expires=\(expiry); HttpOnly; SameSite=Lax"
+        guard let rotated = HTTPCookie.cookies(withResponseHeaderFields: ["Set-Cookie": header], for: address.url).first else {
+            throw SmokeFailure(step: "Foundation did not parse HTTPS fixture cookie")
+        }
+        try check(!rotated.isSecure && rotated.isHTTPOnly, "Server-style fixture must omit only Secure")
+        try api.updateWebSessionCookie(rotated)
+        let refreshed = api.webSessionCookie()
+        try check(refreshed?.isSecure == true && refreshed?.isHTTPOnly == true
+                  && refreshed?.sameSitePolicy == rotated.sameSitePolicy
+                  && refreshed?.value == rotated.value, "Rotated cookie lost protection or failed to replace session")
+        print("PASS: HTTPS cookie compatibility upgrades Secure and preserves origin, HttpOnly and expiry")
+    }
+
     private static func verifyWebCookieBoundary(client: MetisAPI) throws {
         guard let cookie = client.webSessionCookie(), let expires = cookie.expiresDate else {
             throw SmokeFailure(step: "Missing HttpOnly cookie for the Web workspace")
@@ -64,6 +125,8 @@ struct Smoke {
     }
 
     private static func run() async throws {
+        try verifyHTTPSCookieCompatibility()
+        if CommandLine.arguments.contains("--https-cookie-only") { return }
         try verifyEventFraming()
         let input = CommandLine.arguments.dropFirst().first ?? "http://localhost:43100"
         let address = try ServerAddress(input)

@@ -1,5 +1,9 @@
 # Metis for iPhone
 
+Developer Beta 0.1.23 accepts properly scoped session cookies from HTTPS servers
+that omit the `Secure` attribute. The app hardens the cookie before handing it
+into the embedded workspace and blocks cleartext workspace requests.
+
 Developer Beta 0.1.22 cancels obsolete requests when a connection closes and
 prevents a late chat list refresh from starting on that closed session.
 
@@ -137,10 +141,10 @@ watchOS 8 deployment support in Xcode 26.6. A successful source typecheck at
 
 ## Build version and notification placement
 
-The iPhone marketing version is `0.1.$(CURRENT_PROJECT_VERSION)`. Build 22
-therefore reports **0.1.22** in iPhone settings without a separate UI version
+The iPhone marketing version is `0.1.$(CURRENT_PROJECT_VERSION)`. Build 23
+therefore reports **0.1.23** in iPhone settings without a separate UI version
 string. Settings appends the optional `METIS_RELEASE_CHANNEL` from the bundle,
-currently **Developer Beta**, so the current display is **0.1.22 Developer Beta**. Apple bundle version
+currently **Developer Beta**, so the current display is **0.1.23 Developer Beta**. Apple bundle version
 metadata remains numeric; an empty release channel shows only that version.
 
 Inside the iPhone Web workspace, top Sonner notices retain the library's

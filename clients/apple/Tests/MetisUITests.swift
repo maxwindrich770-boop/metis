@@ -45,7 +45,7 @@ final class MetisUITests: XCTestCase {
         XCTAssertTrue(app.navigationBars["iPhone settings"].waitForExistence(timeout: 10))
         let version = app.descendants(matching: .any)["metis.appVersion"].firstMatch
         XCTAssertTrue(version.waitForExistence(timeout: 5))
-        XCTAssertEqual(version.value as? String, "0.1.22 Developer Beta")
+        XCTAssertEqual(version.value as? String, "0.1.23 Developer Beta")
         capture(app, named: "build14-version-in-native-settings")
     }
 

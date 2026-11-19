@@ -497,6 +497,23 @@ final class MetisWebWorkspace: NSObject, ObservableObject {
             errorMessage = String(localized: "The saved server address is invalid.")
             return
         }
+        if server.scheme?.lowercased() == "https" {
+            do {
+                // A later first-party Set-Cookie can omit Secure again. Keep this
+                // isolated cookie store off all cleartext URLs, including subresources.
+                let rules = try await WKContentRuleListStore.default().compileContentRuleList(
+                    forIdentifier: "metis-workspace-https-only-v1",
+                    encodedContentRuleList: #"[{"trigger":{"url-filter":"^http://"},"action":{"type":"block"}},{"trigger":{"url-filter":"^ws://"},"action":{"type":"block"}}]"#
+                )
+                guard !Task.isCancelled, !invalidated, current == generation else { return }
+                webView.configuration.userContentController.add(rules)
+            } catch {
+                guard !Task.isCancelled, !invalidated, current == generation else { return }
+                isLoading = false
+                errorMessage = String(localized: "The secure Metis workspace could not start. Retry to continue.")
+                return
+            }
+        }
         guard let cookie = client.webSessionCookie() else {
             loseAuthorization()
             return
