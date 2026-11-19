@@ -506,6 +506,7 @@ final class MetisWebWorkspace: NSObject, ObservableObject {
                     encodedContentRuleList: #"[{"trigger":{"url-filter":"^http://"},"action":{"type":"block"}},{"trigger":{"url-filter":"^ws://"},"action":{"type":"block"}}]"#
                 )
                 guard !Task.isCancelled, !invalidated, current == generation else { return }
+                guard let rules else { throw MetisError.unexpectedResponse }
                 webView.configuration.userContentController.add(rules)
             } catch {
                 guard !Task.isCancelled, !invalidated, current == generation else { return }
