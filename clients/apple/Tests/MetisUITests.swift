@@ -1129,6 +1129,80 @@ final class MetisUITests: XCTestCase {
         try assertSyntheticWorkspaceClearance(in: app, web: web)
     }
 
+    private struct MessageEditMetrics: Decodable {
+        let scale: Double
+        let offsetLeft: Double
+        let font: Double
+        let focused: Bool
+        let dockHidden: Bool
+        let editorFits: Bool
+    }
+
+    @MainActor
+    func testMessageCorrectionKeepsEditorVisibleAndPreservesUnsentDraft() throws {
+        XCUIDevice.shared.orientation = .portrait
+        let app = launch(additionalArguments: ["-metis.synthetic-input-occlusion"])
+        signIn(app, server: "http://localhost:43100")
+        let web = authenticatedWebWorkspace(in: app)
+        let link = web.links["Open message correction fixture"]
+        reveal(link, in: app)
+        link.tap()
+
+        let prefix = "Message edit metrics: "
+        let status = web.staticTexts.matching(NSPredicate(format: "label BEGINSWITH %@", prefix)).firstMatch
+        func metrics() throws -> MessageEditMetrics {
+            try JSONDecoder().decode(MessageEditMetrics.self, from: Data(status.label.dropFirst(prefix.count).utf8))
+        }
+
+        let draft = web.textViews["Normal chat draft"]
+        let edit = web.buttons["Edit this message and resend"]
+        XCTAssertTrue(edit.waitForExistence(timeout: 10))
+        XCTAssertEqual(draft.value as? String, "Unsent draft")
+        let initial = try metrics()
+        edit.tap()
+
+        let editor = web.textViews["Edit message"]
+        XCTAssertTrue(editor.waitForExistence(timeout: 5))
+        editor.tap()
+        editor.typeText(" correction")
+        let cancel = web.buttons["Cancel"]
+        let save = web.buttons["Save & resend"]
+        let ready = XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in
+            guard let state = try? metrics() else { return false }
+            return state.focused && state.dockHidden && state.editorFits && cancel.isHittable && save.isHittable
+        }, object: app)
+        let readyResult = XCTWaiter.wait(for: [ready], timeout: 6)
+        let active = try metrics()
+        capture(app, named: "iphone-message-correction-focused")
+        XCTAssertGreaterThanOrEqual(active.font, 16, "WebKit's focused text must not trigger automatic zoom: \(status.label)")
+        XCTAssertEqual(active.scale, initial.scale, accuracy: 0.01)
+        XCTAssertEqual(active.offsetLeft, initial.offsetLeft, accuracy: 1)
+        XCTAssertEqual(readyResult, .completed, "The editor and actions must be visible with the composer hidden: \(status.label)")
+        XCTAssertTrue(app.staticTexts["metis.syntheticInputOcclusion"].exists,
+                      "Exercise the inline editor under the native fixture's keyboard occlusion")
+        let measurement = XCTAttachment(string: status.label)
+        measurement.name = "iphone-message-correction-geometry"
+        measurement.lifetime = .keepAlways
+        add(measurement)
+        XCTAssertFalse(draft.exists, "The hidden composer must not remain accessible")
+        cancel.tap()
+        XCTAssertTrue(draft.waitForExistence(timeout: 5))
+        XCTAssertEqual(draft.value as? String, "Unsent draft")
+        XCTAssertTrue(web.staticTexts["Original test message"].exists)
+
+        edit.tap()
+        XCTAssertTrue(editor.waitForExistence(timeout: 5))
+        editor.tap()
+        editor.typeText(" saved")
+        let edited = try XCTUnwrap(editor.value as? String).trimmingCharacters(in: .whitespacesAndNewlines)
+        XCTAssertNotEqual(edited, "Original test message")
+        save.tap()
+        XCTAssertFalse(editor.exists)
+        XCTAssertTrue(draft.waitForExistence(timeout: 5))
+        XCTAssertEqual(draft.value as? String, "Unsent draft")
+        XCTAssertTrue(web.staticTexts[edited].exists)
+    }
+
     @MainActor
     func testSyntheticTextareaComposerKeepsScaleAndCenterWhenFocused() throws {
         try assertSyntheticComposerPreservesScaleAndCenter(contentEditable: false)

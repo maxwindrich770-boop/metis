@@ -39,6 +39,7 @@ function webWorkspaceFixture(username: string, cookieName: string, externalAddre
     <a href="${externalAddress}" target="_blank" rel="noopener">Open the external fixture in a new window</a>
     <button id="scripted-external">Get an API key from the web fixture</button>
     <button id="logout">Sign out from the web fixture</button>
+    <a href="/?fixture=message-edit">Open message correction fixture</a>
     <a href="/?fixture=viewport">Open synthetic viewport fixture</a>
     <a href="/?fixture=composer-zoom">Open synthetic contenteditable composer fixture</a>
     <a href="/?fixture=viewport-empty">Open synthetic centered empty-state fixture</a>
@@ -1110,6 +1111,7 @@ async function main() {
         }
         const html = account && (fixture === "viewport" || fixture === "composer-zoom" || fixture === "viewport-empty" || fixture === "viewport-empty-flow" || fixture === "viewport-tall" || fixture === "viewport-empty-large"
           ? webViewportFixture(account.username, fixture === "composer-zoom", fixture === "viewport-empty", fixture === "viewport-empty-flow" || fixture === "viewport-empty-large", fixture === "viewport-tall", fixture === "viewport-empty-large")
+          : fixture === "message-edit" ? readFileSync(path.join(import.meta.dirname, "message-edit-fixture.html"), "utf8")
           : fixture === "toasts" ? await webToastFixture()
           : fixture === "usage" ? await webUsageFixture()
           : fixture === "project-notes" ? await webProjectNotesFixture()

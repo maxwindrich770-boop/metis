@@ -515,6 +515,19 @@ enum MetisAppWebPresentation {
         html[data-metis-native-app="ios"] .composer-input-area [contenteditable="true"] {
           font-size: max(16px, 1rem);
         }
+        /* Inline editing owns the keyboard and the visible transcript.
+           Hide (don't unmount) the dock so the separate unsent draft survives. */
+        html[data-metis-native-app="ios"] .metis-shell article textarea[aria-label="Edit message"] {
+          font-size: max(16px, 1rem);
+          min-width: 0;
+          max-width: 100%;
+        }
+        html[data-metis-native-app="ios"] .metis-shell:has(article textarea[aria-label="Edit message"]) [data-metis-app-composer-dock] {
+          visibility: hidden;
+        }
+        html[data-metis-native-app="ios"] .metis-shell [class~="overflow-y-auto"]:has(article textarea[aria-label="Edit message"]) {
+          margin-bottom: var(--metis-app-edit-keyboard-inset, 0px);
+        }
         /* UIKit already removes the keyboard from the web viewport. The
            server's transient visualViewport bottom offset must not remove it twice. */
         html[data-metis-native-app="ios"] [data-metis-app-composer-dock] {
@@ -631,6 +644,32 @@ enum MetisAppWebPresentation {
           greeting.style.setProperty('--metis-app-greeting-shift', shift + 'px');
         }
       };
+      const inlineEditorSelector = '.metis-shell article textarea[aria-label="Edit message"]';
+      let inlineEditLayout = null;
+      const updateInlineEditLayout = (keyboardInset, refocus = false) => {
+        const editor = document.querySelector(inlineEditorSelector);
+        const transcript = editor?.closest('[class~="overflow-y-auto"]');
+        if (inlineEditLayout && inlineEditLayout.transcript !== transcript) {
+          inlineEditLayout.transcript.style.removeProperty('--metis-app-edit-keyboard-inset');
+          inlineEditLayout = null;
+        }
+        if (!transcript) return;
+        if (!refocus && inlineEditLayout?.editor === editor && inlineEditLayout.keyboardInset === keyboardInset &&
+            inlineEditLayout.width === innerWidth && inlineEditLayout.height === innerHeight) return;
+
+        inlineEditLayout = { editor, transcript, keyboardInset, width: innerWidth, height: innerHeight };
+        transcript.style.setProperty('--metis-app-edit-keyboard-inset', keyboardInset + 'px');
+        // Scroll only the transcript, and only when editing starts or its available
+        // space changes. Keep the full editor (including its actions) in view.
+        const panel = editor.parentElement.getBoundingClientRect();
+        const viewport = transcript.getBoundingClientRect();
+        const bottom = Math.min(viewport.bottom, innerHeight);
+        if (bottom <= viewport.top || !panel.height) return;
+        const top = viewport.top + 8;
+        const shift = panel.height > bottom - top || panel.top < top
+          ? panel.top - top : Math.max(0, panel.bottom - bottom + 8);
+        if (Math.abs(shift) > 1) transcript.scrollTop += shift;
+      };
       // Keep the empty welcome group together when a full keyboard occludes
       // its editor. Message transcripts retain their full-height layout.
       // This measures geometry only; no heading text or chat values are read.
@@ -638,6 +677,7 @@ enum MetisAppWebPresentation {
         const fullHeight = parseFloat(getComputedStyle(document.documentElement)
           .getPropertyValue('--metis-app-window-height')) || innerHeight;
         const keyboardVisible = fullHeight > innerHeight + 1;
+        updateInlineEditLayout(keyboardVisible ? fullHeight - innerHeight : 0);
         for (const dock of document.querySelectorAll('[data-metis-app-composer-dock]')) {
           const previous = parseFloat(dock.style.getPropertyValue('--metis-app-composer-shift')) || 0;
           const reservedInset = dockSpacers.get(dock)?.getBoundingClientRect().height || 0;
@@ -654,6 +694,15 @@ enum MetisAppWebPresentation {
       window.addEventListener('resize', updateComposerLayout);
       window.visualViewport?.addEventListener('resize', updateComposerLayout);
       document.addEventListener('metis-native-layout', updateComposerLayout);
+      document.addEventListener('focusin', event => {
+        if (!event.target.matches?.(inlineEditorSelector)) return;
+        requestAnimationFrame(() => {
+          if (document.activeElement !== event.target) return;
+          const fullHeight = parseFloat(getComputedStyle(document.documentElement)
+            .getPropertyValue('--metis-app-window-height')) || innerHeight;
+          updateInlineEditLayout(Math.max(0, fullHeight - innerHeight), true);
+        });
+      });
 
       let lastUpdatePending = null;
       const announceUpdate = () => {

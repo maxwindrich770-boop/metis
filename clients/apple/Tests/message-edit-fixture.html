@@ -1,0 +1,79 @@
+<!doctype html>
+<html lang="en">
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Message correction fixture</title>
+<style>
+  * { box-sizing: border-box; }
+  body { margin: 0; font: 16px system-ui; }
+  .metis-shell { position: relative; height: 100dvh; display: flex; flex-direction: column; }
+  header { padding: 12px; border-bottom: 1px solid #aaa; }
+  #metrics { font-size: 11px; overflow-wrap: anywhere; }
+  .overflow-y-auto { flex: 1; min-height: 0; overflow-y: auto; overflow-anchor: none; }
+  .messages { min-height: 100%; padding: 12px 12px 154px; display: flex; flex-direction: column; justify-content: flex-end; }
+  article { align-self: flex-end; width: 82%; }
+  .editor { border: 1px solid #aaa; padding: 8px; border-radius: 10px; }
+  textarea { width: 100%; min-height: 80px; font: 15px system-ui; }
+  button { min-height: 44px; }
+  footer { position: absolute; bottom: 0; width: 100%; padding: 10px 12px; background: white; }
+  aside { display: none; }
+</style>
+<main class="metis-shell">
+  <header><h1 style="font-size:16px;margin:0">Message correction fixture</h1><p id="metrics"></p></header>
+  <aside aria-label="Chats sidebar"><div><button aria-label="Open account menu"></button></div></aside>
+  <div class="overflow-y-auto"><div class="messages"><article>
+    <p id="message">Original test message</p><button id="edit" aria-label="Edit this message and resend">Edit</button>
+  </article></div></div>
+  <footer class="pointer-events-none z-20 w-full"><form>
+    <textarea class="composer-input-area" aria-label="Normal chat draft">Unsent draft</textarea>
+  </form></footer>
+</main>
+<script>
+  const message = document.querySelector('#message');
+  const edit = document.querySelector('#edit');
+  const transcript = document.querySelector('.overflow-y-auto');
+  const metrics = document.querySelector('#metrics');
+  function report() {
+    const field = document.querySelector('textarea[aria-label="Edit message"]');
+    const box = field?.parentElement.getBoundingClientRect();
+    const result = 'Message edit metrics: ' + JSON.stringify({
+      scale: visualViewport?.scale ?? 1,
+      offsetLeft: visualViewport?.offsetLeft ?? 0,
+      font: field ? parseFloat(getComputedStyle(field).fontSize) : 0,
+      focused: !!field && document.activeElement === field,
+      dockHidden: getComputedStyle(document.querySelector('footer')).visibility === 'hidden',
+      editorFits: !!box && box.left >= -1 && box.right <= innerWidth + 1 &&
+        box.top >= transcript.getBoundingClientRect().top - 1 && box.bottom <= innerHeight + 1,
+    });
+    if (metrics.textContent !== result) metrics.textContent = result;
+  }
+  const scheduleReport = () => requestAnimationFrame(report);
+  addEventListener('resize', scheduleReport);
+  visualViewport?.addEventListener('resize', scheduleReport);
+  document.addEventListener('metis-native-layout', scheduleReport);
+  transcript.addEventListener('scroll', scheduleReport);
+  edit.addEventListener('click', () => {
+    const container = document.createElement('div');
+    container.className = 'editor';
+    container.innerHTML = '<textarea aria-label="Edit message"></textarea>' +
+      '<button type="button">Cancel</button> <button type="button">Save &amp; resend</button>';
+    const field = container.querySelector('textarea');
+    field.value = message.textContent;
+    const close = () => {
+      container.remove();
+      message.hidden = edit.hidden = false;
+      scheduleReport();
+    };
+    const [cancel, save] = container.querySelectorAll('button');
+    cancel.onclick = close;
+    save.onclick = () => { message.textContent = field.value.trim(); close(); };
+    message.hidden = edit.hidden = true;
+    edit.after(container);
+    field.focus();
+    field.select();
+    scheduleReport();
+  });
+  document.addEventListener('focusin', scheduleReport);
+  report();
+</script>
+</html>
