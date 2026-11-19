@@ -935,6 +935,32 @@ function webAppControlsSubframeFixture() {
     </body></html>`;
 }
 
+function browserSignInFixture(externalAddress: string) {
+  return `<!doctype html><html lang="en"><head><meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Fixture server sign-in</title>
+    <style>body{font:16px system-ui;margin:20px} label,input,button,a{display:block;margin:8px 0} input,button,a{font-size:16px;min-height:44px}</style>
+    </head><body><h1>Fixture server sign-in</h1>
+    <a href="${externalAddress}">Leave sign-in origin</a>
+    <form id="login">
+      <label>Server username<input id="user" aria-label="Server username" required></label>
+      <label>Server password<input id="password" aria-label="Server password" type="password" required></label>
+      <button type="submit">Continue on fixture server</button>
+    </form>
+    <p role="status" id="status"></p>
+    <script>
+    document.querySelector('#login').addEventListener('submit', async event => {
+      event.preventDefault();
+      const response = await fetch('/api/auth', {
+        method: 'POST', headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({username: document.querySelector('#user').value, password: document.querySelector('#password').value})
+      });
+      if (response.ok) location.reload();
+      else document.querySelector('#status').textContent = 'Login rejected by the fixture';
+    });
+    </script></body></html>`;
+}
+
 async function main() {
   const root = mkdtempSync(path.join(tmpdir(), "metis-apple-fixture-"));
   const workspace = path.join(root, "model-workspace");
@@ -1005,6 +1031,7 @@ async function main() {
   const droppedReplies = new Set<string>();
   let delayedHistory: { chatId: string; jobId: string } | undefined;
   let offline = false;
+  let browserSignInRequired = false;
   let updateRestartAttempts = 0;
   let mobileProfileUnavailable = false;
   let fallbackProfileReads = 0;
@@ -1027,6 +1054,7 @@ async function main() {
       if (url.pathname === "/fixture-control" && method === "POST") {
         const state = url.searchParams.get("state");
         if (state === "offline" || state === "online") offline = state === "offline";
+        else if (state === "browser-sign-in" || state === "native-sign-in") browserSignInRequired = state === "browser-sign-in";
         else if (state === "profile-fallback" || state === "profile-mobile") {
           mobileProfileUnavailable = state === "profile-fallback";
           fallbackProfileReads = 0;
@@ -1123,6 +1151,8 @@ async function main() {
           : webWorkspaceFixture(account.username, CHAT_COOKIE, externalAddress));
         response = account ? new Response(html, {
           headers: { "content-type": "text/html; charset=utf-8", "cache-control": "private, no-store" },
+        }) : browserSignInRequired ? new Response(browserSignInFixture(externalAddress), {
+          headers: { "content-type": "text/html; charset=utf-8", "cache-control": "no-store" },
         }) : new Response("The synthetic web fixture requires an authenticated cookie.", {
           status: 401, headers: { "content-type": "text/plain; charset=utf-8", "cache-control": "no-store" },
         });
@@ -1152,6 +1182,10 @@ async function main() {
         const credentials = await request.clone().json().catch(() => null);
         if (credentials?.username === "metis-apple-fixture-redirect") {
           response = new Response(null, { status: 307, headers: { Location: "/fixture-redirect-target" } });
+        } else if (credentials?.username === "metis-apple-fixture-no-session") {
+          response = Response.json({ ok: true });
+        } else if (browserSignInRequired && request.headers.get("origin") !== url.origin) {
+          response = Response.json({ error: "The fixture requires its first-party login page." }, { status: 401 });
         } else {
           response = await auth.POST(request);
         }

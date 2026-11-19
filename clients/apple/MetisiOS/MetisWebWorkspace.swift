@@ -168,8 +168,23 @@ enum MetisWebOnboardingPolicy {
 
 #if canImport(WebKit) && canImport(UIKit)
 import Combine
+import SwiftUI
 import UIKit
 import WebKit
+
+@MainActor
+private enum MetisSecureWebTransport {
+    static func rules(for server: URL) async throws -> WKContentRuleList? {
+        guard server.scheme?.lowercased() == "https" else { return nil }
+        // A proxy can omit Secure on any rotation. Both isolated web surfaces
+        // must stay off cleartext URLs, including subresources.
+        guard let rules = try await WKContentRuleListStore.default().compileContentRuleList(
+            forIdentifier: "metis-workspace-https-only-v1",
+            encodedContentRuleList: #"[{"trigger":{"url-filter":"^http://"},"action":{"type":"block"}},{"trigger":{"url-filter":"^ws://"},"action":{"type":"block"}}]"#
+        ) else { throw MetisError.unexpectedResponse }
+        return rules
+    }
+}
 
 private final class MetisWebCookieObserver: NSObject, WKHTTPCookieStoreObserver {
     weak var owner: MetisWebWorkspace?
@@ -192,6 +207,238 @@ private final class MetisAppControlsBridge: NSObject, WKScriptMessageHandler {
                 self?.owner?.receiveAppControls(message)
             }
         }
+    }
+}
+
+/// Shows the chosen server's actual login page without handing it the native draft.
+@MainActor
+final class MetisServerSignIn: NSObject, ObservableObject, Identifiable, WKNavigationDelegate, WKHTTPCookieStoreObserver {
+    let id = UUID()
+    let server: URL
+    let webView: WKWebView
+    @Published private(set) var loading = true
+    @Published private(set) var verifying = false
+    @Published private(set) var errorMessage: String?
+
+    private let client: MetisAPI
+    private let completion: (UUID, MetisAPI, [ChatSummary]) -> Void
+    private var started = false
+    private var closed = false
+    private var probe: Task<Void, Never>?
+    private var pendingProbe = false
+    private var triedCookie: HTTPCookie?
+
+    init(address: ServerAddress, completion: @escaping (UUID, MetisAPI, [ChatSummary]) -> Void) {
+        server = address.url
+        client = MetisAPI(address: address)
+        self.completion = completion
+        let configuration = WKWebViewConfiguration()
+        configuration.websiteDataStore = .nonPersistent()
+        configuration.defaultWebpagePreferences.preferredContentMode = .mobile
+        configuration.preferences.javaScriptCanOpenWindowsAutomatically = false
+        webView = WKWebView(frame: .zero, configuration: configuration)
+        super.init()
+        webView.navigationDelegate = self
+    }
+
+    func load() async {
+        guard !closed, !verifying else { return }
+        loading = true
+        errorMessage = nil
+        triedCookie = nil
+        if !started {
+            do {
+                let rules = try await MetisSecureWebTransport.rules(for: server)
+                guard !closed, !Task.isCancelled else { return }
+                if let rules { webView.configuration.userContentController.add(rules) }
+            } catch {
+                guard !closed, !Task.isCancelled else { return }
+                fail(String(localized: "The secure sign-in page could not start. Try again."))
+                return
+            }
+            started = true
+            webView.configuration.websiteDataStore.httpCookieStore.add(self)
+        }
+        webView.load(URLRequest(url: server, cachePolicy: .reloadIgnoringLocalCacheData))
+    }
+
+    func close() { close(keepingClient: false) }
+
+    private func close(keepingClient: Bool) {
+        guard !closed else { return }
+        closed = true
+        webView.configuration.websiteDataStore.httpCookieStore.remove(self)
+        webView.stopLoading()
+        webView.navigationDelegate = nil
+        if !keepingClient {
+            probe?.cancel()
+            client.invalidate()
+        }
+    }
+
+    private func fail(_ message: String) {
+        loading = false
+        errorMessage = message
+    }
+
+    nonisolated func cookiesDidChange(in cookieStore: WKHTTPCookieStore) {
+        Task { @MainActor [weak self] in self?.verifyIfReady() }
+    }
+
+    private func verifyIfReady() {
+        guard !closed, let loaded = webView.url, MetisWebPolicy.isSameOrigin(loaded, server: server) else { return }
+        if probe != nil { pendingProbe = true; return }
+        probe = Task { [weak self] in
+            guard let self else { return }
+            await self.verifySession()
+            self.probe = nil
+            if self.pendingProbe {
+                self.pendingProbe = false
+                self.verifyIfReady()
+            }
+        }
+    }
+
+    private func verifySession() async {
+        let cookies = await withCheckedContinuation { (continuation: CheckedContinuation<[HTTPCookie], Never>) in
+            webView.configuration.websiteDataStore.httpCookieStore.getAllCookies {
+                continuation.resume(returning: $0)
+            }
+        }
+        guard !closed, !Task.isCancelled, let loaded = webView.url,
+              MetisWebPolicy.isSameOrigin(loaded, server: server),
+              let cookie = cookies.first(where: {
+                  $0.name == "ai_chat_auth" && $0.domain.caseInsensitiveCompare(server.host ?? "") == .orderedSame
+                      && $0.path == "/"
+              }), triedCookie?.value != cookie.value || triedCookie?.expiresDate != cookie.expiresDate else { return }
+        triedCookie = cookie
+        verifying = true
+        defer { verifying = false }
+        do {
+            try client.updateWebSessionCookie(cookie)
+            // As with native sign-in, only a server-verified Metis session
+            // can be persisted. No Web content, form data or extra cookies cross.
+            let chats = try await client.chats()
+            guard !closed, !Task.isCancelled else { return }
+            close(keepingClient: true)
+            completion(id, client, chats)
+        } catch MetisError.unauthorized {
+            guard !closed, !Task.isCancelled else { return }
+            fail(String(localized: "The server page signed in, but Metis could not verify its session in the app."))
+        } catch {
+            guard !closed, !Task.isCancelled else { return }
+            fail(message(for: error))
+        }
+    }
+
+    func webView(_ webView: WKWebView, decidePolicyFor action: WKNavigationAction,
+                 decisionHandler: @escaping (WKNavigationActionPolicy) -> Void) {
+        guard !closed, let url = action.request.url, action.targetFrame != nil,
+              MetisWebPolicy.isSameOrigin(url, server: server), !action.shouldPerformDownload else {
+            decisionHandler(.cancel)
+            if !closed, action.targetFrame?.isMainFrame != false {
+                fail(String(localized: "Sign-in must stay on the selected server."))
+            }
+            return
+        }
+        decisionHandler(.allow)
+    }
+
+    func webView(_ webView: WKWebView, decidePolicyFor response: WKNavigationResponse,
+                 decisionHandler: @escaping (WKNavigationResponsePolicy) -> Void) {
+        guard !closed, let url = response.response.url, MetisWebPolicy.isSameOrigin(url, server: server),
+              response.canShowMIMEType,
+              (response.response as? HTTPURLResponse)?.value(forHTTPHeaderField: "Content-Disposition")?
+                  .lowercased().hasPrefix("attachment") != true else {
+            decisionHandler(.cancel)
+            return
+        }
+        decisionHandler(.allow)
+    }
+
+    func webView(_ webView: WKWebView, didStartProvisionalNavigation navigation: WKNavigation!) {
+        guard !closed else { return }
+        loading = true
+    }
+
+    func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) {
+        guard !closed else { return }
+        loading = false
+        verifyIfReady()
+    }
+
+    func webView(_ webView: WKWebView, didFail navigation: WKNavigation!, withError error: Error) {
+        guard !closed, (error as? URLError)?.code != .cancelled else { return }
+        fail(message(for: error))
+    }
+
+    func webView(_ webView: WKWebView, didFailProvisionalNavigation navigation: WKNavigation!, withError error: Error) {
+        self.webView(webView, didFail: navigation, withError: error)
+    }
+
+    func webViewWebContentProcessDidTerminate(_ webView: WKWebView) {
+        guard !closed else { return }
+        fail(String(localized: "The sign-in page closed unexpectedly. Try again."))
+    }
+
+    func webView(_ webView: WKWebView, didReceive challenge: URLAuthenticationChallenge,
+                 completionHandler: @escaping (URLSession.AuthChallengeDisposition, URLCredential?) -> Void) {
+        completionHandler(!closed && challenge.protectionSpace.authenticationMethod == NSURLAuthenticationMethodServerTrust
+                          ? .performDefaultHandling : .cancelAuthenticationChallenge, nil)
+    }
+}
+
+struct MetisServerSignInSheet: View {
+    @ObservedObject var flow: MetisServerSignIn
+    @Environment(\.dismiss) private var dismiss
+
+    var body: some View {
+        NavigationStack {
+            VStack(spacing: 0) {
+                Text(verbatim: flow.server.absoluteString)
+                    .font(.footnote)
+                    .foregroundStyle(MetisTheme.muted)
+                    .lineLimit(2)
+                    .padding(.horizontal, 16)
+                    .padding(.bottom, 8)
+                    .accessibilityLabel(Text("Selected server: ") + Text(verbatim: flow.server.absoluteString))
+                if flow.loading || flow.verifying {
+                    ProgressView(flow.verifying ? "Checking Metis session…" : "Loading server sign-in…")
+                        .padding(8)
+                }
+                if let error = flow.errorMessage {
+                    MetisNotice(text: error)
+                        .padding(.horizontal, 16)
+                    Button {
+                        Task { await flow.load() }
+                    } label: {
+                        Text("Reload server page")
+                            .frame(minHeight: 44)
+                            .contentShape(Rectangle())
+                    }
+                    .disabled(flow.verifying)
+                }
+                ServerSignInWebView(webView: flow.webView)
+                    .accessibilityIdentifier("metis.serverSignInWebView")
+            }
+            .background(MetisTheme.background)
+            .navigationTitle("Server sign-in")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .cancellationAction) {
+                    Button("Cancel") { flow.close(); dismiss() }
+                        .accessibilityIdentifier("metis.cancelServerSignIn")
+                }
+            }
+        }
+        .task { await flow.load() }
+        .onDisappear { flow.close() }
+    }
+
+    private struct ServerSignInWebView: UIViewRepresentable {
+        let webView: WKWebView
+        func makeUIView(context: Context) -> WKWebView { webView }
+        func updateUIView(_ uiView: WKWebView, context: Context) {}
     }
 }
 
@@ -497,23 +744,15 @@ final class MetisWebWorkspace: NSObject, ObservableObject {
             errorMessage = String(localized: "The saved server address is invalid.")
             return
         }
-        if server.scheme?.lowercased() == "https" {
-            do {
-                // A later first-party Set-Cookie can omit Secure again. Keep this
-                // isolated cookie store off all cleartext URLs, including subresources.
-                let rules = try await WKContentRuleListStore.default().compileContentRuleList(
-                    forIdentifier: "metis-workspace-https-only-v1",
-                    encodedContentRuleList: #"[{"trigger":{"url-filter":"^http://"},"action":{"type":"block"}},{"trigger":{"url-filter":"^ws://"},"action":{"type":"block"}}]"#
-                )
-                guard !Task.isCancelled, !invalidated, current == generation else { return }
-                guard let rules else { throw MetisError.unexpectedResponse }
-                webView.configuration.userContentController.add(rules)
-            } catch {
-                guard !Task.isCancelled, !invalidated, current == generation else { return }
-                isLoading = false
-                errorMessage = String(localized: "The secure Metis workspace could not start. Retry to continue.")
-                return
-            }
+        do {
+            let rules = try await MetisSecureWebTransport.rules(for: server)
+            guard !Task.isCancelled, !invalidated, current == generation else { return }
+            if let rules { webView.configuration.userContentController.add(rules) }
+        } catch {
+            guard !Task.isCancelled, !invalidated, current == generation else { return }
+            isLoading = false
+            errorMessage = String(localized: "The secure Metis workspace could not start. Retry to continue.")
+            return
         }
         guard let cookie = client.webSessionCookie() else {
             loseAuthorization()

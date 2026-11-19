@@ -152,7 +152,12 @@ struct Smoke {
         do {
             _ = try await alice.signIn(username: "metis-apple-fixture-alice", password: "wrong")
             throw SmokeFailure(step: "Invalid credentials were accepted")
-        } catch MetisError.unauthorized {}
+        } catch MetisError.signInRejected {}
+        do {
+            _ = try await alice.signIn(username: "metis-apple-fixture-no-session", password: password)
+            throw SmokeFailure(step: "A login without a usable session was accepted")
+        } catch MetisError.signInSessionRejected {}
+        print("PASS: login request rejection and subsequent session rejection are distinct")
         let aliceChats = try await alice.signIn(username: "metis-apple-fixture-alice", password: password)
         let bobChats = try await bob.signIn(username: "metis-apple-fixture-bob", password: password)
         try check(aliceChats.map(\.title) == ["Fixture chat"], "Alice's chat list")

@@ -269,6 +269,8 @@ struct ChatHistoryWindow {
 enum MetisError: LocalizedError {
     case invalidServer
     case unauthorized
+    case signInRejected
+    case signInSessionRejected
     case unexpectedResponse
     case noModel
     case unavailableModel
@@ -281,6 +283,10 @@ enum MetisError: LocalizedError {
             return "Enter the HTTPS address of a Metis server, without a path or credentials."
         case .unauthorized:
             return "Your session is no longer valid. Sign in again."
+        case .signInRejected:
+            return "The server rejected app sign-in. Check your login details or sign in on the server page."
+        case .signInSessionRejected:
+            return "The server accepted sign-in but rejected the app session. Try signing in on the server page."
         case .unexpectedResponse:
             return "This server did not return a compatible Metis response."
         case .noModel:
@@ -570,13 +576,19 @@ final class MetisAPI: Sendable {
 
     func signIn(username: String, password: String) async throws -> [ChatSummary] {
         let body = try JSONEncoder().encode(Credentials(username: username, password: password))
-        let response: Acknowledgement = try await request(["auth"], method: "POST", body: body)
+        let response: Acknowledgement
+        do {
+            response = try await request(["auth"], method: "POST", body: body)
+        } catch MetisError.unauthorized {
+            throw MetisError.signInRejected
+        }
         guard response.ok else { throw MetisError.unexpectedResponse }
         // A successful POST alone does not establish that the cookie was accepted.
         do {
             return try await chats()
         } catch {
             try? await signOut()
+            if case MetisError.unauthorized = error { throw MetisError.signInSessionRejected }
             throw error
         }
     }

@@ -26,8 +26,17 @@ per normalized username and 300 globally per 15 minutes.
 The inspected HTTP login and chat read handlers do not require a browser
 Origin header. The explicit Origin gate in [server.mjs](../server.mjs) for
 browser-stream WebSockets is a separate transport. A reverse proxy may impose
-its own checks. Release clients require trusted HTTPS and reject redirects,
-including redirects from an incorrectly configured upstream.
+its own checks. Release clients require trusted HTTPS. Native API requests
+reject redirects, including redirects from an incorrectly configured upstream.
+
+The iPhone also offers **Sign in on server page**. It shows the selected
+server's normal sign-in in an isolated, nonpersistent WebKit view. Page
+navigation stays on the selected origin; the app does not fill the server
+form or copy its credentials. Only the validated first-party Metis cookie
+can cross back into the native client, and `GET /api/chats` must succeed before
+the app saves the session. This does not bypass failed credentials, external
+identity-provider redirects, certificate checks, or an incompatible chat API.
+Native login distinguishes a rejected login request from a rejected session.
 
 Long text and tool payloads may be projected into deferred content/event URLs.
 The current client shows the text preview and a web hint. It does not fetch

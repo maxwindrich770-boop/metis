@@ -492,10 +492,56 @@ final class MetisUITests: XCTestCase {
         capture(app, named: "07-watch-access-opt-in-restored")
     }
 
+    private var signInFixturePort: Int {
+        ProcessInfo.processInfo.environment["METIS_NATIVE_SIGNIN_FIXTURE_PORT"].flatMap(Int.init) ?? 43100
+    }
+
+    @MainActor
+    func testBrowserSignInRespectsOriginAndContinuesWithVerifiedSession() async throws {
+        let port = signInFixturePort
+        try await setFixtureSessionState("browser-sign-in", port: port)
+        addTeardownBlock { [weak self] in
+            try await self?.setFixtureSessionState("native-sign-in", port: port)
+        }
+        XCUIDevice.shared.orientation = .portrait
+        let app = launch()
+        signIn(app, server: "http://localhost:\(port)")
+        let notice = app.staticTexts["metis.signInNotice"]
+        XCTAssertTrue(notice.waitForExistence(timeout: 10))
+        XCTAssertTrue(notice.label.contains("The server rejected app sign-in"))
+        let recovery = app.buttons["metis.serverSignIn"]
+        reveal(recovery, in: app)
+        XCTAssertGreaterThanOrEqual(recovery.frame.height, 44)
+        recovery.tap()
+
+        let web = app.webViews.firstMatch
+        let login = web.buttons["Continue on fixture server"]
+        XCTAssertTrue(login.waitForExistence(timeout: 10))
+        capture(app, named: "server-login-fallback")
+        let link = web.links["Leave sign-in origin"]
+        XCTAssertTrue(link.exists)
+        link.tap()
+        XCTAssertTrue(app.staticTexts["Sign-in must stay on the selected server."].waitForExistence(timeout: 5))
+        XCTAssertTrue(login.exists, "The cross-origin page must not replace the sign-in surface")
+        XCTAssertFalse(web.staticTexts["External fixture opened without a Metis cookie"].exists)
+
+        let user = web.textFields["Server username"]
+        let password = web.secureTextFields["Server password"]
+        user.tap()
+        user.typeText("metis-apple-fixture-alice")
+        password.tap()
+        password.typeText("apple-fixture-only")
+        if !login.isHittable { web.swipeUp() }
+        login.tap()
+        let workspace = authenticatedWebWorkspace(in: app)
+        XCTAssertTrue(workspace.buttons["Save a chat from the web fixture"].waitForExistence(timeout: 10))
+        XCTAssertFalse(app.navigationBars["Server sign-in"].exists)
+    }
+
     @MainActor
     func testAuthenticatedWebWorkspacePersistsChangesAndLogsOut() {
         let app = launch()
-        signIn(app, server: "http://localhost:43100")
+        signIn(app, server: "http://localhost:\(signInFixturePort)")
         let web = authenticatedWebWorkspace(in: app)
         web.buttons["Save a chat from the web fixture"].tap()
         let savedChat = web.staticTexts.matching(NSPredicate(format: "label CONTAINS %@", "Saved from web fixture")).firstMatch
@@ -2470,18 +2516,18 @@ final class MetisUITests: XCTestCase {
         XCTAssertTrue(restoring.exists)
     }
 
-    private func fixtureControlURL(state: String? = nil) throws -> URL {
+    private func fixtureControlURL(state: String? = nil, port: Int = 43100) throws -> URL {
         var components = URLComponents()
         components.scheme = "http"
         components.host = "127.0.0.1"
-        components.port = 43100
+        components.port = port
         components.path = "/fixture-control"
         if let state { components.queryItems = [URLQueryItem(name: "state", value: state)] }
         return try XCTUnwrap(components.url)
     }
 
-    private func setFixtureSessionState(_ state: String) async throws {
-        var request = URLRequest(url: try fixtureControlURL(state: state), timeoutInterval: 5)
+    private func setFixtureSessionState(_ state: String, port: Int = 43100) async throws {
+        var request = URLRequest(url: try fixtureControlURL(state: state, port: port), timeoutInterval: 5)
         request.httpMethod = "POST"
         let (_, response) = try await URLSession.shared.data(for: request)
         XCTAssertEqual((response as? HTTPURLResponse)?.statusCode, 204)
